@@ -119,6 +119,7 @@ export class NavigationController {
   private onSpeechSettingFn?: (setting: SpeechSettingCommand) => void;
   private logoutFn: () => void;
   private onToggleVisionFn?: (active: boolean) => void;
+  private onSwitchModeFn?: (mode: 'voice' | 'keyboard' | 'manual') => void;
   private startListeningFn?: () => void;
   private lastSpokenText: string = '';
 
@@ -133,6 +134,7 @@ export class NavigationController {
     onSpeechSetting?: (setting: SpeechSettingCommand) => void;
     logout?: () => void;
     onToggleVision?: (active: boolean) => void;
+    onSwitchMode?: (mode: 'voice' | 'keyboard' | 'manual') => void;
     startListening?: () => void;
   }) {
     this.context = opts.context;
@@ -145,6 +147,7 @@ export class NavigationController {
     this.onSpeechSettingFn = opts.onSpeechSetting;
     this.logoutFn = opts.logout || (() => {});
     this.onToggleVisionFn = opts.onToggleVision;
+    this.onSwitchModeFn = opts.onSwitchMode;
     this.startListeningFn = opts.startListening;
   }
 
@@ -281,6 +284,55 @@ export class NavigationController {
         ...base,
         status: 'system_handled',
         spokenResponse: 'Vision Assistant deactivated.'
+      };
+    }
+
+    // PRIORITY 1.5: Global Accessibility Mode Switching Commands
+    if (
+      clean === 'switch to vision mode' ||
+      clean === 'switch to voice mode' ||
+      clean === 'vision mode' ||
+      clean === 'voice mode' ||
+      clean === 'activate vision mode' ||
+      clean === 'activate voice mode'
+    ) {
+      if (this.onSwitchModeFn) this.onSwitchModeFn('voice');
+      return {
+        ...base,
+        status: 'system_handled',
+        spokenResponse: 'Voice Assistance Mode activated. I will guide you through the application.'
+      };
+    }
+
+    if (
+      clean === 'switch to keyboard mode' ||
+      clean === 'switch to shortcut mode' ||
+      clean === 'keyboard mode' ||
+      clean === 'shortcut mode' ||
+      clean === 'keyboard shortcut mode'
+    ) {
+      if (this.onSwitchModeFn) this.onSwitchModeFn('keyboard');
+      return {
+        ...base,
+        status: 'system_handled',
+        spokenResponse: 'Keyboard Shortcut Mode activated. Use Alt+K, Alt+V, or Alt+M to manage modes, and Alt+H for keyboard help.'
+      };
+    }
+
+    if (
+      clean === 'switch to manual mode' ||
+      clean === 'manual mode' ||
+      clean === 'independent mode' ||
+      clean === 'independent manual mode' ||
+      clean === 'i will do it myself' ||
+      clean === 'ill do it myself' ||
+      clean === 'do it myself'
+    ) {
+      if (this.onSwitchModeFn) this.onSwitchModeFn('manual');
+      return {
+        ...base,
+        status: 'system_handled',
+        spokenResponse: 'Independent Manual Mode activated. Automatic speech and microphone are turned off.'
       };
     }
 

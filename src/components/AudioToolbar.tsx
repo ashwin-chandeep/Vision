@@ -37,8 +37,8 @@ export function AudioToolbar({ textToRead, label = 'Audio Read Aloud' }: AudioTo
       <button
         type="button"
         onClick={handlePlayPause}
-        aria-label={isSpeaking ? 'Pause reading aloud' : 'Read aloud (Alt+R)'}
-        title={isSpeaking ? 'Pause reading aloud' : 'Read aloud (Alt+R)'}
+        aria-label={isSpeaking ? 'Pause reading aloud' : 'Read aloud'}
+        title={isSpeaking ? 'Pause reading aloud' : 'Read aloud'}
         className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
           isSpeaking
             ? 'bg-blue-700 text-white animate-pulse'

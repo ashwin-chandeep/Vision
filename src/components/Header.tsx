@@ -20,6 +20,7 @@ import {
 import { useAccessibility } from '../context/AccessibilityContext.tsx';
 import { APPROVED_SCREENS, SCREEN_REGISTRY } from '../types/screens.ts';
 import { User } from '../db/database.ts';
+import { getPageHelp } from '../data/pageHelpRegistry.ts';
 
 export function Header() {
   const {
@@ -42,17 +43,45 @@ export function Header() {
     deactivateVisionAssistant,
     showKeyboardShortcutsModal,
     setShowKeyboardShortcutsModal,
-    isVoiceListening
+    interactionMode,
+    setShowModeSelectorModal,
+    isVoiceListening,
+    speakText,
   } = useAccessibility();
 
   const [showRoleDropdown, setShowRoleDropdown] = useState(false);
-  const [showHelpModal, setShowHelpModal] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
 
-  const isModalOpen = showHelpModal || showKeyboardShortcutsModal;
-  const setModalOpen = (open: boolean) => {
-    setShowHelpModal(open);
-    setShowKeyboardShortcutsModal(open);
+  const isAuthScreen = currentScreen === 'login' || currentScreen === 'register';
+
+  const handleShortcutsAction = () => {
+    window.dispatchEvent(new CustomEvent('accessprep:show-inline-keyboard-help'));
+    const bannerEl = document.getElementById('page-help-banner-heading');
+    if (bannerEl) {
+      bannerEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    const rec = getPageHelp(currentScreen);
+    const textToSpeak = isAuthScreen
+      ? 'ACCESSPREP-X Keyboard Shortcuts: Press L to type email address or roll number. Press P to enter password. Press C to auto-fill audio verification code. Press S to sign in. Press R to play audio verification code. Press F 2 to re-read field. Press Y to confirm. Press N to clear. Press H for help. Press K to hear shortcuts again. Press Escape to stop speech.'
+      : `${rec.spokenKeyboardHelp} Press R to replay, press V for voice commands, or press S to continue.`;
+    announce(textToSpeak, 'polite');
+    speakText(textToSpeak);
+  };
+
+  // On auth screens: speak current mode aloud instead of opening mode selector modal.
+  const handleModeAction = () => {
+    if (isAuthScreen) {
+      const modeLabel =
+        interactionMode === 'voice'
+          ? 'Voice Assistance Mode is active. The microphone is always listening. Speak your commands at any time.'
+          : interactionMode === 'keyboard'
+          ? 'Keyboard Shortcut Mode is active. Use single-letter keys L, P, C, S, R, K, H and Escape on the login page.'
+          : 'Independent Manual Mode is active. Use your keyboard or screen reader to navigate.';
+      announce(modeLabel, 'assertive');
+      speakText(modeLabel);
+    } else {
+      setShowModeSelectorModal(true);
+    }
   };
 
   const currentMeta = SCREEN_REGISTRY[currentScreen];
@@ -140,7 +169,7 @@ export function Header() {
         href="#main-content"
         className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:px-4 focus:py-2 focus:bg-[#123BB8] focus:text-white focus:font-bold focus:rounded-md focus:shadow-lg focus:outline-hidden"
       >
-        Skip to main content (Alt+C)
+        Skip to main content
       </a>
 
       {/* 2. Main ACCESSPREP-X Application Header (No Govt of India bar, clean layout) */}
@@ -199,6 +228,41 @@ export function Header() {
         <div className="flex items-center gap-2 sm:gap-3">
           {/* Accessibility Quick Controls (Integrated cleanly) */}
           <div className="flex items-center gap-1.5 bg-[#F8FAFC] p-1 rounded-lg border border-[#D9E1EF]">
+            {/* Accessibility Interaction Mode Pill / Switcher */}
+            <button
+              type="button"
+              onClick={handleModeAction}
+              aria-label={`Current accessibility mode: ${
+                interactionMode === 'voice'
+                  ? 'Voice Assistance Mode'
+                  : interactionMode === 'keyboard'
+                  ? 'Keyboard Shortcut Mode'
+                  : 'Independent Manual Mode'
+              }. ${isAuthScreen ? 'Press to hear mode description.' : 'Click to change mode (Alt+Shift+A).'}`}
+              title={isAuthScreen ? 'Hear current accessibility mode (spoken aloud)' : 'Change accessibility interaction mode (Alt+Shift+A)'}
+              className="px-2.5 py-1 rounded text-xs font-bold border transition-colors flex items-center gap-1.5 focus:outline-none focus:ring-2 focus:ring-[#1749E8] bg-white text-slate-800 border-[#D9E1EF] hover:bg-[#EEF4FF] hover:text-[#1749E8]"
+            >
+              {interactionMode === 'voice' ? (
+                <>
+                  <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse" aria-hidden="true" />
+                  <span className="hidden sm:inline">Mode:</span>
+                  <span className="text-[#1749E8]">Voice</span>
+                </>
+              ) : interactionMode === 'keyboard' ? (
+                <>
+                  <span className="w-2 h-2 rounded-full bg-emerald-600" aria-hidden="true" />
+                  <span className="hidden sm:inline">Mode:</span>
+                  <span className="text-emerald-700">Keyboard</span>
+                </>
+              ) : (
+                <>
+                  <span className="w-2 h-2 rounded-full bg-purple-600" aria-hidden="true" />
+                  <span className="hidden sm:inline">Mode:</span>
+                  <span className="text-purple-700">Manual</span>
+                </>
+              )}
+            </button>
+
             {/* Hands-Free Vision Mode Toggle (Section 3 & 4) */}
             <button
               type="button"
@@ -294,9 +358,9 @@ export function Header() {
             {/* Keyboard Shortcuts Trigger */}
             <button
               type="button"
-              onClick={() => setModalOpen(true)}
-              aria-label="Keyboard shortcuts (Alt+/)"
-              title="View keyboard shortcuts (Alt+/)"
+              onClick={handleShortcutsAction}
+              aria-label={isAuthScreen ? 'Hear keyboard shortcuts (spoken aloud)' : 'Keyboard shortcuts (Press K)'}
+              title={isAuthScreen ? 'Press to hear all keyboard shortcuts spoken aloud' : 'View keyboard shortcuts (Press K)'}
               className="p-1.5 bg-white hover:bg-[#EEF4FF] text-slate-700 hover:text-[#1749E8] rounded border border-[#D9E1EF]"
             >
               <HelpCircle className="w-3.5 h-3.5 text-[#6241C8]" />
@@ -432,121 +496,6 @@ export function Header() {
           )}
         </div>
       </div>
-
-      {/* 3. Keyboard Shortcuts Help Modal (Section 11) */}
-      {isModalOpen && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="shortcuts-title"
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-xs"
-        >
-          <div className="bg-white rounded-xl border-2 border-[#1749E8] max-w-xl w-full p-6 shadow-2xl text-slate-900 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-200 mb-4 sticky top-0 bg-white z-10">
-              <h3 id="shortcuts-title" className="text-lg font-bold text-slate-900 flex items-center gap-2">
-                <HelpCircle className="w-5 h-5 text-[#1749E8]" />
-                Accessible Keyboard Shortcuts Guide
-              </h3>
-              <button
-                type="button"
-                onClick={() => setModalOpen(false)}
-                className="px-2.5 py-1 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded border border-slate-300"
-              >
-                Close (Esc)
-              </button>
-            </div>
-
-            <div className="space-y-2 text-xs text-slate-800">
-              <div className="flex items-center justify-between p-2 bg-[#EEF4FF] rounded border border-[#D9E1EF]">
-                <span className="font-semibold text-[#172033]">Activate Vision Voice Assistant</span>
-                <kbd className="px-2 py-1 bg-white text-[#1749E8] border border-[#1749E8] rounded font-mono font-bold">Alt + Space</kbd>
-              </div>
-              <div className="flex items-center justify-between p-2 bg-amber-50 rounded border border-amber-200">
-                <span className="font-semibold text-amber-950">Toggle Vision Mode (Wake word "Hey Vision")</span>
-                <kbd className="px-2 py-1 bg-amber-200 text-amber-950 rounded font-mono font-bold">Alt + V</kbd>
-              </div>
-              <div className="flex items-center justify-between p-2 bg-slate-50 rounded border border-slate-200">
-                <span className="font-semibold">Candidate Dashboard</span>
-                <kbd className="px-2 py-1 bg-slate-200 text-slate-900 rounded font-mono font-bold">Alt + D</kbd>
-              </div>
-              <div className="flex items-center justify-between p-2 bg-slate-50 rounded border border-slate-200">
-                <span className="font-semibold">AI Syllabus Tutor</span>
-                <kbd className="px-2 py-1 bg-slate-200 text-slate-900 rounded font-mono font-bold">Alt + T</kbd>
-              </div>
-              <div className="flex items-center justify-between p-2 bg-slate-50 rounded border border-slate-200">
-                <span className="font-semibold">Voice Practice &amp; Assessment</span>
-                <kbd className="px-2 py-1 bg-slate-200 text-slate-900 rounded font-mono font-bold">Alt + P</kbd>
-              </div>
-              <div className="flex items-center justify-between p-2 bg-slate-50 rounded border border-slate-200">
-                <span className="font-semibold">Full Mock Examination</span>
-                <kbd className="px-2 py-1 bg-slate-200 text-slate-900 rounded font-mono font-bold">Alt + E</kbd>
-              </div>
-              <div className="flex items-center justify-between p-2 bg-slate-50 rounded border border-slate-200">
-                <span className="font-semibold">Pilot Demo Examination</span>
-                <kbd className="px-2 py-1 bg-slate-200 text-slate-900 rounded font-mono font-bold">Alt + M</kbd>
-              </div>
-              <div className="flex items-center justify-between p-2 bg-slate-50 rounded border border-slate-200">
-                <span className="font-semibold">Spaced Revision Planner</span>
-                <kbd className="px-2 py-1 bg-slate-200 text-slate-900 rounded font-mono font-bold">Alt + R</kbd>
-              </div>
-              <div className="flex items-center justify-between p-2 bg-slate-50 rounded border border-slate-200">
-                <span className="font-semibold">Weak Areas Analysis</span>
-                <kbd className="px-2 py-1 bg-slate-200 text-slate-900 rounded font-mono font-bold">Alt + A</kbd>
-              </div>
-              <div className="flex items-center justify-between p-2 bg-slate-50 rounded border border-slate-200">
-                <span className="font-semibold">Screen Reader Settings &amp; Audio Controls</span>
-                <kbd className="px-2 py-1 bg-slate-200 text-slate-900 rounded font-mono font-bold">Alt + S</kbd>
-              </div>
-              <div className="flex items-center justify-between p-2 bg-slate-50 rounded border border-slate-200">
-                <span className="font-semibold">Subject Deep Dive Topics</span>
-                <kbd className="px-2 py-1 bg-slate-200 text-slate-900 rounded font-mono font-bold">Alt + G</kbd>
-              </div>
-              <div className="flex items-center justify-between p-2 bg-slate-50 rounded border border-slate-200">
-                <span className="font-semibold">Current Affairs (Attributable PIB/ISRO/Govt)</span>
-                <kbd className="px-2 py-1 bg-slate-200 text-slate-900 rounded font-mono font-bold">Alt + C</kbd>
-              </div>
-              <div className="flex items-center justify-between p-2 bg-slate-50 rounded border border-slate-200">
-                <span className="font-semibold">Candidate Learning History &amp; Transcript Workspace</span>
-                <kbd className="px-2 py-1 bg-slate-200 text-slate-900 rounded font-mono font-bold">Alt + H</kbd>
-              </div>
-              <div className="flex items-center justify-between p-2 bg-slate-50 rounded border border-slate-200">
-                <span className="font-semibold">Spoken Human Verification / Login</span>
-                <kbd className="px-2 py-1 bg-slate-200 text-slate-900 rounded font-mono font-bold">Alt + K</kbd>
-              </div>
-              <div className="flex items-center justify-between p-2 bg-slate-50 rounded border border-slate-200">
-                <span className="font-semibold">Read Current Question Aloud</span>
-                <kbd className="px-2 py-1 bg-slate-200 text-slate-900 rounded font-mono font-bold">Alt + Q</kbd>
-              </div>
-              <div className="flex items-center justify-between p-2 bg-slate-50 rounded border border-slate-200">
-                <span className="font-semibold">Read Question Options Aloud</span>
-                <kbd className="px-2 py-1 bg-slate-200 text-slate-900 rounded font-mono font-bold">Alt + O</kbd>
-              </div>
-              <div className="flex items-center justify-between p-2 bg-slate-50 rounded border border-slate-200">
-                <span className="font-semibold">Stop Speech / Cancel Audio</span>
-                <kbd className="px-2 py-1 bg-slate-200 text-slate-900 rounded font-mono font-bold">Escape</kbd>
-              </div>
-              <div className="flex items-center justify-between p-2 bg-slate-50 rounded border border-slate-200">
-                <span className="font-semibold">Sign Out / Logout</span>
-                <kbd className="px-2 py-1 bg-slate-200 text-slate-900 rounded font-mono font-bold">Alt + L</kbd>
-              </div>
-              <div className="flex items-center justify-between p-2 bg-slate-50 rounded border border-slate-200">
-                <span className="font-semibold">This Keyboard Shortcuts Reference Dialog</span>
-                <kbd className="px-2 py-1 bg-slate-200 text-slate-900 rounded font-mono font-bold">Alt + /</kbd>
-              </div>
-            </div>
-
-            <div className="mt-6 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setModalOpen(false)}
-                className="px-4 py-2 bg-[#1749E8] hover:bg-[#123BB8] text-white font-semibold text-xs rounded-md shadow-xs"
-              >
-                Close Dialog
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </header>
   );
 }

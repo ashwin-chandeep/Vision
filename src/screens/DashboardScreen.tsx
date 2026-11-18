@@ -205,6 +205,18 @@ export function DashboardScreen() {
             voiceCommand: 'Say "Mock Exam" or "Mock Test"'
           },
           {
+            label: 'Subject & Topic Explorer',
+            opens: 'Opens all 4 SSC MTS sections and 18 syllabus topics.',
+            shortcut: 'Alt + S',
+            voiceCommand: 'Say "Explore Subjects" or "Topics"'
+          },
+          {
+            label: 'Pilot Demo Diagnostic',
+            opens: 'Opens 20-question accessible diagnostic examination.',
+            shortcut: 'Alt + O',
+            voiceCommand: 'Say "Pilot Demo" or "Diagnostic"'
+          },
+          {
             label: 'AI Tutor',
             opens: 'Opens conversational AI Tutor for syllabus questions, math shortcuts, and reasoning puzzles.',
             shortcut: 'Alt + T',
@@ -217,15 +229,15 @@ export function DashboardScreen() {
             voiceCommand: 'Say "Revision Planner" or "Spaced Revision"'
           },
           {
-            label: 'Weak Areas & Topic Mastery',
-            opens: 'Opens Bayesian Knowledge Tracing topic mastery matrix and readiness breakdown.',
+            label: 'Progress Analytics',
+            opens: 'Opens performance analytics, Bayesian mastery, and weak area breakdown.',
             shortcut: 'Alt + A',
-            voiceCommand: 'Say "Weak Areas" or "Topic Mastery"'
+            voiceCommand: 'Say "Progress Analytics" or "Weak Areas"'
           },
           {
             label: 'Accessibility Settings',
             opens: 'Customizes color contrast, text sizing, screen reader speed, and PwD time.',
-            shortcut: 'Alt + S',
+            shortcut: 'Alt + C',
             voiceCommand: 'Say "Accessibility Settings"'
           },
           {

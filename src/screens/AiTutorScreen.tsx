@@ -168,18 +168,9 @@ export const AiTutorScreen: React.FC = () => {
       const target = e.target as HTMLElement;
       const isInput = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
 
-      if (e.altKey && e.key.toLowerCase() === 'k') {
-        e.preventDefault();
-        setShowKeyModal((prev) => !prev);
-        return;
-      }
-
       if (!isInput) {
         const k = e.key.toLowerCase();
-        if (k === 'k') {
-          e.preventDefault();
-          setShowKeyModal((prev) => !prev);
-        } else if (k === 'a' || e.key === 'Enter') {
+        if (k === 'a' || e.key === 'Enter') {
           e.preventDefault();
           inputRef.current?.focus();
         } else if (k === 'c') {
@@ -310,11 +301,11 @@ export const AiTutorScreen: React.FC = () => {
             type="button"
             onClick={() => setShowKeyModal(true)}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg shadow-2xs focus:outline-none focus:ring-2 focus:ring-blue-600 transition-colors"
-            title="Configure Gemini API Key (Press K)"
-            aria-label="Configure Gemini API Key (Press K)"
+            title="Configure Gemini API Key"
+            aria-label="Configure Gemini API Key"
           >
             <Key className="w-3.5 h-3.5 text-blue-700" />
-            <span>API Key (K)</span>
+            <span>API Key</span>
             {apiKey ? (
               <span className="w-2 h-2 rounded-full bg-emerald-500" title="Connected" />
             ) : null}

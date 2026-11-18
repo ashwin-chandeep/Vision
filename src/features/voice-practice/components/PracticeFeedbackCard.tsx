@@ -1,34 +1,55 @@
 /**
  * ACCESSPREP-X — Voice Practice Immediate Feedback Card
+ * ============================================================================
+ * High-visibility explanation card for Voice Practice questions.
+ * Backwards-compatible wrapper around AccessibleExplanationCard.
  */
 
 import React from 'react';
+import { AccessibleExplanationCard } from '../../../components/common/AccessibleExplanationCard.tsx';
 
 export interface PracticeFeedbackCardProps {
   isCorrect: boolean;
   correctOption: string;
   explanation: string;
+  questionText?: string;
+  selectedOption?: string | null;
+  selectedOptionText?: string;
+  correctOptionText?: string;
+  simplifiedExplanation?: string;
+  subject?: string;
+  topic?: string;
+  onReadAloud?: () => void;
 }
 
 export function PracticeFeedbackCard({
   isCorrect,
   correctOption,
-  explanation
+  explanation,
+  questionText,
+  selectedOption,
+  selectedOptionText,
+  correctOptionText,
+  simplifiedExplanation,
+  subject,
+  topic,
+  onReadAloud
 }: PracticeFeedbackCardProps) {
   return (
-    <div
-      role="status"
-      aria-live="polite"
-      className={`p-4 rounded-xl border-2 space-y-2 ${
-        isCorrect
-          ? 'bg-emerald-50 border-emerald-500 text-emerald-950'
-          : 'bg-red-50 border-red-500 text-red-950'
-      }`}
-    >
-      <div className="font-bold text-base">
-        {isCorrect ? '✓ Correct Answer!' : `✗ Incorrect — Correct Option: ${correctOption}`}
-      </div>
-      <p className="text-sm leading-relaxed">{explanation}</p>
-    </div>
+    <AccessibleExplanationCard
+      isCorrect={isCorrect}
+      correctOption={correctOption}
+      correctOptionText={correctOptionText}
+      explanation={explanation}
+      questionText={questionText}
+      selectedOption={selectedOption}
+      selectedOptionText={selectedOptionText}
+      simplifiedExplanation={simplifiedExplanation}
+      subject={subject}
+      topic={topic}
+      marksAwarded={isCorrect ? 3 : 0}
+      onReadAloud={onReadAloud}
+      className="my-3"
+    />
   );
 }

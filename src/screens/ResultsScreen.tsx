@@ -16,6 +16,7 @@ import {
 import { useAccessibility } from '../context/AccessibilityContext.tsx';
 import { AudioToolbar } from '../components/AudioToolbar.tsx';
 import { ScreenNavigationDisclaimer } from '../components/ScreenNavigationDisclaimer.tsx';
+import { AccessibleExplanationCard } from '../components/common/AccessibleExplanationCard.tsx';
 import { MockExamAttempt, Question } from '../db/database.ts';
 
 export function ResultsScreen() {
@@ -271,92 +272,23 @@ export function ResultsScreen() {
           if (!q) return null;
 
           return (
-            <div
-              key={item.questionId}
-              className={`p-6 bg-white border-2 rounded-xl space-y-4 shadow-2xs ${
-                item.isCorrect
-                  ? 'border-emerald-300'
-                  : item.isAnswered
-                  ? 'border-red-300'
-                  : 'border-slate-300'
-              }`}
-            >
-              {/* Question Header & Status Badge */}
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold px-2 py-0.5 bg-slate-100 text-slate-800 rounded border border-slate-300">
-                    Q #{idx + 1} ({q.subject})
-                  </span>
-                  <span className="text-xs font-semibold text-slate-600">
-                    Topic: {q.topic}
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  {item.isCorrect ? (
-                    <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-800 bg-emerald-100 px-2.5 py-1 rounded">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                      Correct (+3)
-                    </span>
-                  ) : item.isAnswered ? (
-                    <span className="inline-flex items-center gap-1 text-xs font-bold text-red-800 bg-red-100 px-2.5 py-1 rounded">
-                      <XCircle className="w-4 h-4 text-red-600" />
-                      Incorrect
-                    </span>
-                  ) : (
-                    <span className="text-xs font-semibold text-slate-600 bg-slate-100 px-2.5 py-1 rounded">
-                      Unattempted (0)
-                    </span>
-                  )}
-
-                  <AudioToolbar
-                    textToRead={`${q.question_text}. Correct Answer is option ${q.correct_answer}. Explanation: ${q.explanation}`}
-                    label={`Read question ${idx + 1} explanation`}
-                  />
-                </div>
-              </div>
-
-              {/* Question Text */}
-              <p className="text-sm sm:text-base font-bold text-slate-900 leading-relaxed">
-                {q.question_text}
-              </p>
-
-              {/* Options Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                {['A', 'B', 'C', 'D'].map((optKey) => {
-                  const optText = (q as any)[`option_${optKey.toLowerCase()}`];
-                  const isCorrectOpt = q.correct_answer === optKey;
-                  const isUserSelection = item.selectedOption === optKey;
-
-                  let style = 'bg-slate-50 border-slate-200 text-slate-700';
-                  if (isCorrectOpt) {
-                    style = 'bg-emerald-100 border-emerald-500 text-emerald-950 font-bold';
-                  } else if (isUserSelection && !item.isCorrect) {
-                    style = 'bg-red-100 border-red-500 text-red-950 line-through';
-                  }
-
-                  return (
-                    <div key={optKey} className={`p-2.5 rounded-lg border flex items-center gap-2.5 ${style}`}>
-                      <span className="w-5 h-5 rounded-full bg-white border border-slate-300 flex items-center justify-center font-bold text-[11px] shrink-0">
-                        {optKey}
-                      </span>
-                      <span>{optText}</span>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Detailed Academic Explanation */}
-              <div className="p-4 bg-slate-50 border border-slate-300 rounded-lg space-y-1.5 text-xs text-slate-800">
-                <span className="font-bold text-slate-900 block">Academic Derivation / Rule:</span>
-                <p className="leading-relaxed">{q.explanation}</p>
-                <div className="pt-1 flex items-center justify-between text-[11px] text-slate-500">
-                  <span>Source: {q.source_name} ({q.source_reference})</span>
-                </div>
-              </div>
+            <div key={item.questionId} className="space-y-3">
+              <AccessibleExplanationCard
+                questionText={`Question ${idx + 1}: ${q.question_text}`}
+                selectedOption={item.selectedOption}
+                selectedOptionText={item.selectedOption ? (q as any)[`option_${item.selectedOption.toLowerCase()}`] : undefined}
+                correctOption={q.correct_answer}
+                correctOptionText={(q as any)[`option_${q.correct_answer.toLowerCase()}`]}
+                isCorrect={Boolean(item.isCorrect)}
+                explanation={q.explanation}
+                subject={q.subject}
+                topic={q.topic}
+                marksAwarded={item.isCorrect ? 3 : 0}
+                sourceReference={`${q.source_name} (${q.source_reference})`}
+              />
 
               {/* Action Buttons: Add to Revision / Ask AI */}
-              <div className="flex flex-wrap items-center justify-end gap-3 pt-1">
+              <div className="flex flex-wrap items-center justify-end gap-3 pb-2">
                 <button
                   type="button"
                   onClick={() => handleAddToRevision(q.question_id)}

@@ -25,6 +25,7 @@ import { useAccessibility } from '../context/AccessibilityContext.tsx';
 import { AudioToolbar } from '../components/AudioToolbar.tsx';
 import { VoiceInputButton } from '../components/VoiceInputButton.tsx';
 import { ScreenNavigationDisclaimer } from '../components/ScreenNavigationDisclaimer.tsx';
+import { AccessibleExplanationCard } from '../components/common/AccessibleExplanationCard.tsx';
 import { Question } from '../db/database.ts';
 import { parseSpokenAnswer } from '../utils/answerParser.ts';
 import { parseSubjectSelectionIntent } from '../voice/commandParser.ts';
@@ -32,7 +33,9 @@ import {
   formatFullQuestionPrompt,
   formatQuestionStemOnly,
   formatAllOptionsPrompt,
-  formatSingleOptionPrompt
+  formatSingleOptionPrompt,
+  repeatQuestionTextOnly,
+  repeatOptionsTextOnly
 } from '../utils/repeatQuestionHelper.ts';
 
 export type PracticeSessionStep =
@@ -721,13 +724,28 @@ export function VoicePracticeScreen() {
       // --- 1. Audio and Repeat Controls ---
       if (parsed.type === 'control') {
         if (parsed.command === 'repeat') {
-          // Explicit manual repeat: read current question without advancing
-          readCurrentQuestion(curQ, currentIndexRef.current, questionsRef.current.length);
+          // Repeat ONLY the question text — no prefix, no question number, no options
+          const curQRepeat = questionsRef.current[currentIndexRef.current];
+          if (curQRepeat) {
+            stopSpeaking();
+            speakText(repeatQuestionTextOnly(curQRepeat), () => {
+              playBeacon('listening');
+              startVoiceListening();
+            });
+          }
           return true;
         }
 
         if (parsed.command === 'repeat_options') {
-          repeatOptionsAloud();
+          // Repeat ONLY the options — no "The options are:" prefix
+          const curQOpts = questionsRef.current[currentIndexRef.current];
+          if (curQOpts) {
+            stopSpeaking();
+            speakText(repeatOptionsTextOnly(curQOpts), () => {
+              playBeacon('listening');
+              startVoiceListening();
+            });
+          }
           return true;
         }
 
@@ -895,8 +913,8 @@ export function VoicePracticeScreen() {
         }
       }
 
-      // Alt + S to switch subject anytime
-      if (e.altKey && (e.key === 's' || e.key === 'S')) {
+      // J to jump to subject selection anytime (not during input)
+      if (!e.altKey && !e.ctrlKey && !e.metaKey && (e.key === 'j' || e.key === 'J')) {
         e.preventDefault();
         stopSpeaking();
         setSessionStep('SUBJECT_SELECTION');
@@ -925,6 +943,32 @@ export function VoicePracticeScreen() {
         if (curQ) {
           readCurrentQuestion(curQ, currentIndexRef.current, questionsRef.current.length);
         }
+      } else if (e.key === 'r' || e.key === 'R') {
+        // R — repeat ONLY the question text (no prefix, no options)
+        if (!e.altKey) {
+          e.preventDefault();
+          const rQ = questionsRef.current[currentIndexRef.current];
+          if (rQ && sessionStepRef.current !== 'SUBJECT_SELECTION' && sessionStepRef.current !== 'LOADING') {
+            stopSpeaking();
+            speakText(repeatQuestionTextOnly(rQ), () => {
+              playBeacon('listening');
+              startVoiceListening();
+            });
+          }
+        }
+      } else if (e.key === 'o' || e.key === 'O') {
+        // O — repeat ONLY the options (no "The options are:" prefix)
+        if (!e.altKey) {
+          e.preventDefault();
+          const oQ = questionsRef.current[currentIndexRef.current];
+          if (oQ && sessionStepRef.current !== 'SUBJECT_SELECTION' && sessionStepRef.current !== 'LOADING') {
+            stopSpeaking();
+            speakText(repeatOptionsTextOnly(oQ), () => {
+              playBeacon('listening');
+              startVoiceListening();
+            });
+          }
+        }
       } else if (e.key === 'Enter') {
         e.preventDefault();
         if (sessionStepRef.current === 'SPEAKING_FEEDBACK' || hasSubmitted) {
@@ -932,12 +976,20 @@ export function VoicePracticeScreen() {
         } else if (selectedOption && !isSubmittingRef.current && !hasAnsweredCurrentQuestionRef.current) {
           submitAnswer(selectedOption);
         }
+      } else if (!e.altKey && !e.ctrlKey && (key === 'P' || e.key === 'ArrowLeft') && sessionStepRef.current !== 'SUBJECT_SELECTION') {
+        e.preventDefault();
+        handlePreviousQuestion();
+      } else if (!e.altKey && !e.ctrlKey && (key === 'N' || e.key === 'ArrowRight') && sessionStepRef.current !== 'SUBJECT_SELECTION') {
+        e.preventDefault();
+        if (sessionStepRef.current === 'SPEAKING_FEEDBACK' || hasSubmitted) {
+          advanceToNextQuestion();
+        }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [hasSubmitted, selectedOption, readCurrentQuestion, advanceToNextQuestion, submitAnswer, handleSelectSubjectAndStart, subjects, stopSpeaking, announce, speakText]);
+  }, [hasSubmitted, selectedOption, readCurrentQuestion, advanceToNextQuestion, handlePreviousQuestion, submitAnswer, handleSelectSubjectAndStart, subjects, stopSpeaking, announce, speakText, startVoiceListening, playBeacon]);
 
   // Effect cleanup on unmount
   useEffect(() => {
@@ -1207,10 +1259,10 @@ export function VoicePracticeScreen() {
               speakText(msg);
             }}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200 focus:ring-2 focus:ring-blue-600"
-            title="Switch practice subject (Alt + S)"
+            title="Switch practice subject (J)"
           >
             <RotateCcw className="w-3.5 h-3.5" />
-            <span>Change Subject (Alt+S)</span>
+            <span>Change Subject (J)</span>
           </button>
           <AudioToolbar textToRead={questionSpeech} label="Read question and options aloud" />
           <VoiceInputButton
@@ -1359,25 +1411,31 @@ export function VoicePracticeScreen() {
             <button
               type="button"
               data-action="repeat-question"
-              onClick={() => readCurrentQuestion(currentQ, currentIndex, questions.length)}
+              onClick={() => {
+                stopSpeaking();
+                speakText(repeatQuestionTextOnly(currentQ));
+              }}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-[#1749E8] bg-[#EEF4FF] hover:bg-blue-100 border border-blue-200 rounded-lg shadow-2xs transition-colors focus:ring-2 focus:ring-[#1749E8]"
-              aria-label="Repeat current question and options aloud (Keyboard shortcut: Alt+R)"
-              title="Repeat complete question and options (Alt+R)"
+              aria-label="Repeat current question text only (Keyboard shortcut: R — question only, Space — full question)"
+              title="Repeat question text only (R)"
             >
               <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
-              <span>Repeat Question (Alt+R)</span>
+              <span>Repeat Question (R)</span>
             </button>
 
             <button
               type="button"
               data-action="repeat-options"
-              onClick={repeatOptionsAloud}
+              onClick={() => {
+                stopSpeaking();
+                speakText(repeatOptionsTextOnly(currentQ));
+              }}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-[#1749E8] bg-[#EEF4FF] hover:bg-blue-100 border border-blue-200 rounded-lg shadow-2xs transition-colors focus:ring-2 focus:ring-[#1749E8]"
-              aria-label="Repeat all four options aloud (Keyboard shortcut: Alt+O)"
-              title="Repeat only options (Alt+O)"
+              aria-label="Repeat answer options only (Keyboard shortcut: O — options only)"
+              title="Repeat options only (O)"
             >
               <List className="w-3.5 h-3.5" aria-hidden="true" />
-              <span>Repeat Options (Alt+O)</span>
+              <span>Repeat Options (O)</span>
             </button>
 
             {isSpeaking && (
@@ -1508,16 +1566,20 @@ export function VoicePracticeScreen() {
               onClick={handlePreviousQuestion}
               disabled={currentIndex === 0}
               className="px-3.5 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg border border-slate-300 disabled:opacity-40"
+              aria-label="Previous practice question (P or Left Arrow)"
+              title="Previous question (P or Left Arrow)"
             >
-              Previous (Alt+P)
+              Previous (P)
             </button>
             <button
               type="button"
               onClick={advanceToNextQuestion}
               disabled={currentIndex === questions.length - 1}
               className="px-3.5 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg border border-slate-300 disabled:opacity-40"
+              aria-label="Next practice question (N or Enter)"
+              title="Next question (N or Enter)"
             >
-              Next (Alt+N)
+              Next (N / Enter)
             </button>
             <button
               type="button"
@@ -1553,52 +1615,31 @@ export function VoicePracticeScreen() {
           </div>
         </div>
 
-        {/* 5. Answer Verification Feedback & Academic Explanation */}
+        {/* 5. High-Visibility Answer Verification Feedback & Academic Explanation */}
         {hasSubmitted && evaluation && (
-          <div
-            role="region"
-            aria-live="polite"
-            className={`p-5 rounded-xl border-2 space-y-3 transition-all ${evaluation.isCorrect
-                ? 'bg-emerald-50 border-emerald-500 text-emerald-950'
-                : 'bg-red-50 border-red-500 text-red-950'
-              }`}
-          >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 font-bold text-base">
-                {evaluation.isCorrect ? (
-                  <>
-                    <CheckCircle2 className="w-5 h-5 text-emerald-700 shrink-0" />
-                    <span>Correct Response! (+3 Marks)</span>
-                  </>
-                ) : (
-                  <>
-                    <XCircle className="w-5 h-5 text-red-700 shrink-0" />
-                    <span>
-                      Incorrect Option Selected. Correct Answer: Option{' '}
-                      {evaluation.correctAnswer || currentQ.correct_answer}
-                    </span>
-                  </>
-                )}
-              </div>
-              <AudioToolbar textToRead={evaluation.explanation} label="Read explanation aloud" />
-            </div>
+          <div className="space-y-3 mt-4">
+            <AccessibleExplanationCard
+              questionText={currentQ.question_text}
+              selectedOption={selectedOption}
+              selectedOptionText={selectedOption ? (currentQ as any)['option_' + selectedOption.toLowerCase()] : undefined}
+              correctOption={evaluation.correctAnswer || currentQ.correct_answer}
+              correctOptionText={(currentQ as any)['option_' + (evaluation.correctAnswer || currentQ.correct_answer).toLowerCase()]}
+              isCorrect={evaluation.isCorrect}
+              explanation={evaluation.explanation}
+              subject={currentQ.subject}
+              topic={currentQ.topic}
+              marksAwarded={evaluation.isCorrect ? 3 : 0}
+              sourceReference={`${currentQ.source_name} (${currentQ.source_reference})`}
+            />
 
-            <div className="text-xs sm:text-sm font-medium leading-relaxed bg-white/90 p-3.5 rounded-lg border border-slate-300">
-              <strong className="block text-slate-900 mb-1">Academic Step-by-Step Derivation:</strong>
-              {evaluation.explanation}
-            </div>
-
-            <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-xs text-slate-700">
-              <span>
-                Source Provenance: {currentQ.source_reference} ({currentQ.source_name})
-              </span>
+            <div className="flex flex-wrap items-center justify-end gap-2 pt-1 text-xs">
               <button
                 type="button"
                 onClick={() => navigateTo('ai_tutor')}
-                className="font-bold text-[#1749E8] hover:underline inline-flex items-center gap-1"
+                className="font-bold text-[#1749E8] dark:text-blue-400 hover:underline inline-flex items-center gap-1.5 p-2 rounded-lg bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800"
               >
-                <Brain className="w-3.5 h-3.5" />
-                <span>Ask AI Tutor to elaborate (Alt+T)</span>
+                <Brain className="w-4 h-4" />
+                <span>Ask AI Tutor to elaborate on this concept (Alt+T)</span>
               </button>
             </div>
           </div>

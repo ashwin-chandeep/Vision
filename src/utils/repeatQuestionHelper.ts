@@ -9,6 +9,10 @@
 
 import { Question } from '../db/database.ts';
 import { renderTextWithMathToSpeech } from '../math/mathematicalSpeechRenderer.ts';
+import {
+  formatReasoningQuestionSpeech,
+  formatReasoningOptionSpeech
+} from './reasoningSpeechFormatter.ts';
 
 /** Only mathematical subjects are rewritten; other subjects are spoken verbatim as before. */
 function isMathSubject(subject?: string): boolean {
@@ -16,24 +20,26 @@ function isMathSubject(subject?: string): boolean {
 }
 
 /** Speech-safe version of any text belonging to a question of the given subject. */
-export function speakableQuestionText(text: string, subject?: string): string {
+export function speakableQuestionText(text: string, subject?: string, topic?: string): string {
   if (!text) return '';
-  return isMathSubject(subject) ? renderTextWithMathToSpeech(text) : text;
+  // Apply math rendering first for numerical subjects, then reasoning speech formatting
+  const afterMath = isMathSubject(subject) ? renderTextWithMathToSpeech(text) : text;
+  return formatReasoningQuestionSpeech(afterMath, subject, topic);
 }
 
 /** Speech for a single option (e.g. "7/9", "x^2", "3 : 2", "4% increase"). Plain words pass through unchanged. */
-export function speakableOptionText(text: string, subject?: string): string {
+export function speakableOptionText(text: string, subject?: string, topic?: string, questionText?: string): string {
   if (!text) return '';
-  if (!isMathSubject(subject)) return text;
-  return renderTextWithMathToSpeech(text);
+  const afterMath = isMathSubject(subject) ? renderTextWithMathToSpeech(text) : text;
+  return formatReasoningOptionSpeech(afterMath, subject, topic, questionText);
 }
 
 function optionsOf(q: Question) {
   return {
-    A: speakableOptionText(q.option_a, q.subject),
-    B: speakableOptionText(q.option_b, q.subject),
-    C: speakableOptionText(q.option_c, q.subject),
-    D: speakableOptionText(q.option_d, q.subject)
+    A: speakableOptionText(q.option_a, q.subject, q.topic, q.question_text),
+    B: speakableOptionText(q.option_b, q.subject, q.topic, q.question_text),
+    C: speakableOptionText(q.option_c, q.subject, q.topic, q.question_text),
+    D: speakableOptionText(q.option_d, q.subject, q.topic, q.question_text)
   };
 }
 
@@ -47,7 +53,7 @@ export function formatFullQuestionPrompt(q: Question, idx?: number, total?: numb
       : `Section: ${q.subject}. `;
 
   const o = optionsOf(q);
-  return `${prefix}${speakableQuestionText(q.question_text, q.subject)}. Option A: ${o.A}. Option B: ${o.B}. Option C: ${o.C}. Option D: ${o.D}. What is your answer?`;
+  return `${prefix}${speakableQuestionText(q.question_text, q.subject, q.topic)}. Option A: ${o.A}. Option B: ${o.B}. Option C: ${o.C}. Option D: ${o.D}. What is your answer?`;
 }
 
 /**
@@ -59,7 +65,7 @@ export function formatQuestionStemOnly(q: Question, idx?: number, total?: number
       ? `Question ${idx + 1} of ${total}. Section: ${q.subject}. `
       : `Section: ${q.subject}. `;
 
-  return `${prefix}${speakableQuestionText(q.question_text, q.subject)}.`;
+  return `${prefix}${speakableQuestionText(q.question_text, q.subject, q.topic)}.`;
 }
 
 /**
@@ -67,7 +73,7 @@ export function formatQuestionStemOnly(q: Question, idx?: number, total?: number
  * Falls back to the whole stem when no distinct equation can be isolated.
  */
 export function formatEquationOnlyPrompt(q: Question): string {
-  const stem = speakableQuestionText(q.question_text, q.subject);
+  const stem = speakableQuestionText(q.question_text, q.subject, q.topic);
   return `The question is: ${stem}.`;
 }
 
@@ -84,7 +90,7 @@ export function formatAllOptionsPrompt(q: Question): string {
  */
 export function formatSingleOptionPrompt(q: Question, opt: 'A' | 'B' | 'C' | 'D'): string {
   const key = `option_${opt.toLowerCase()}` as keyof Question;
-  const val = speakableOptionText(String(q[key] || ''), q.subject);
+  const val = speakableOptionText(String(q[key] || ''), q.subject, q.topic, q.question_text);
   return `Option ${opt}: ${val}.`;
 }
 
@@ -109,6 +115,28 @@ export function formatFlashcardQuestionPrompt(
       : `Subject: ${card.subject}, Topic: ${card.topic}. `;
 
   return `${prefix}${speakableQuestionText(card.questionText, card.subject)}.`;
+}
+
+/**
+ * Returns ONLY the question text — no prefix, no question number, no "Section:", no options.
+ * Use for keyboard shortcut R and voice command "repeat question".
+ */
+export function repeatQuestionTextOnly(q: Question): string {
+  return speakableQuestionText(q.question_text, q.subject, q.topic);
+}
+
+/**
+ * Returns ONLY "A: [text]. B: [text]. C: [text]. D: [text]." — no "The options are:" intro.
+ * Use for keyboard shortcut O and voice command "repeat options".
+ */
+export function repeatOptionsTextOnly(q: Question): string {
+  const o = optionsOf(q);
+  const parts: string[] = [];
+  if (o.A) parts.push(`A: ${o.A}`);
+  if (o.B) parts.push(`B: ${o.B}`);
+  if (o.C) parts.push(`C: ${o.C}`);
+  if (o.D) parts.push(`D: ${o.D}`);
+  return parts.join('. ') + '.';
 }
 
 /**

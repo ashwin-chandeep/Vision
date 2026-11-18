@@ -7,7 +7,10 @@ import {
   ShieldCheck,
   Sparkles,
   CheckCircle2,
-  Loader2
+  Loader2,
+  Eye,
+  EyeOff,
+  Keyboard
 } from 'lucide-react';
 import { useAccessibility } from '../context/AccessibilityContext.tsx';
 import { AuthenticationLayout } from '../components/auth/AuthenticationLayout.tsx';
@@ -19,24 +22,27 @@ import { AuthenticationErrorMessage } from '../components/auth/AuthenticationErr
 import {
   formatCaptchaForSpeech,
   normalizeSpokenEmail,
-  normalizeSpokenName,
+  analyzeSpokenEmail,
   spellOutIdentifier,
   validateLoginIdentifier,
-  parseAuthVoiceCommand
+  parseAuthVoiceCommand,
+  reconstructSpelledEmail
 } from '../utils/authVoiceUtils.ts';
 import { extractDigits } from '../utils/humanVerification.ts';
 import { parseConfirmationIntent } from '../voice/commandParser.ts';
 
-type LoginVoiceStep =
+export type LoginVoiceStep =
   | 'idle'
   | 'ask_email'
+  | 'ambiguous_email'
   | 'confirm_email'
   | 'enter_password'
-  | 'verify_captcha'
+  | 'ask_captcha'
+  | 'confirm_captcha'
   | 'confirm_submit';
 
 const LOGIN_INTRO_MESSAGE =
-  'Welcome to ACCESSPREP-X Login. This page allows existing students to access their accounts. You can sign in using your registered email address, password and audio verification code. You can use your voice or keyboard to enter your information. Say Read Instructions to hear the login process.';
+  'Welcome to ACCESSPREP-X. Let us sign you in. Please say your registered email address or roll number, or use your keyboard.';
 
 const LOGIN_GUIDE_MESSAGE =
   'Login Instructions: Step 1, enter your registered email address or SSC Roll Number. Step 2, enter your password securely using your keyboard. Step 3, listen to the four-digit audio verification code by pressing Play Audio CAPTCHA or Alt plus R, and enter or speak the digits. Step 4, activate Sign In to open your dashboard. You can also say Start Voice Login for step-by-step spoken guidance.';
@@ -58,13 +64,15 @@ export function LoginScreen() {
     micPermissionStatus,
     startVoiceListening,
     stopVoiceListening,
-    registerVoiceHandler
+    registerVoiceHandler,
+    interactionMode
   } = useAccessibility();
 
-  // Form Values (Defaulting to empty or candidate demo when requested; pre-populated for smooth instant testing)
-  const [identifier, setIdentifier] = useState('candidate@accessprep.nic.in');
-  const [password, setPassword] = useState('candidate123');
+  // Form Values: default strictly empty (no prefilled demo password in production)
+  const [identifier, setIdentifier] = useState('');
+  const [password, setPassword] = useState('');
   const [captchaInput, setCaptchaInput] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
 
   // Field-level & form-level validation errors
   const [identifierError, setIdentifierError] = useState<string | null>(null);
@@ -80,9 +88,11 @@ export function LoginScreen() {
   const [verificationToken, setVerificationToken] = useState<string | null>(null);
   const [verifiedForInput, setVerifiedForInput] = useState<string>('');
   const [isCapturingCaptchaVoice, setIsCapturingCaptchaVoice] = useState(false);
+  const [recognizedCaptchaDigits, setRecognizedCaptchaDigits] = useState('');
 
-  // Voice-Guided Login Workflow State
+  // Voice-Guided Login Workflow State Machine
   const [voiceStep, setVoiceStep] = useState<LoginVoiceStep>('idle');
+  const [ambiguousOptions, setAmbiguousOptions] = useState<string[]>([]);
   const lastPromptRef = useRef<string>(LOGIN_INTRO_MESSAGE);
   const hasAnnouncedIntroRef = useRef<boolean>(false);
 
@@ -91,7 +101,13 @@ export function LoginScreen() {
   const passwordInputRef = useRef<HTMLInputElement | null>(null);
   const captchaInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Keep latest state in refs for asynchronous voice handler callbacks
+  // Tracks which field is currently active (for F2 re-read)
+  const activeFieldRef = useRef<'email' | 'password' | 'captcha' | null>(null);
+
+  // Tracks whether email has been confirmed by user after read-back
+  const emailConfirmedRef = useRef<boolean>(false);
+
+  // Live state refs for asynchronous voice handlers
   const voiceStepRef = useRef<LoginVoiceStep>(voiceStep);
   voiceStepRef.current = voiceStep;
   const identifierRef = useRef<string>(identifier);
@@ -104,14 +120,210 @@ export function LoginScreen() {
   challengeRef.current = challenge;
   const isCapturingCaptchaVoiceRef = useRef<boolean>(isCapturingCaptchaVoice);
   isCapturingCaptchaVoiceRef.current = isCapturingCaptchaVoice;
+  const recognizedCaptchaDigitsRef = useRef<string>(recognizedCaptchaDigits);
+  recognizedCaptchaDigitsRef.current = recognizedCaptchaDigits;
+
+  // ─── Field Focus Announcements ───────────────────────────────────────────────
+  // When the cursor enters a field, speak what the field is + instructions.
+  const handleEmailFocus = useCallback(() => {
+    activeFieldRef.current = 'email';
+    const msg =
+      'You are now in the Email ID field. Type your registered email address or SSC Roll Number. ' +
+      'Press Tab or Enter when done and I will read it back to you for confirmation.';
+    announce(msg, 'assertive');
+    speakText(msg);
+  }, [announce, speakText]);
+
+  const handlePasswordFocus = useCallback(() => {
+    activeFieldRef.current = 'password';
+    const msg =
+      'You are now in the Password field. Type your confidential password using the keyboard. ' +
+      'Your password will never be read aloud. Press Tab or Enter when done.';
+    announce(msg, 'assertive');
+    speakText(msg);
+  }, [announce, speakText]);
+
+  const handleCaptchaFocus = useCallback(() => {
+    activeFieldRef.current = 'captcha';
+    // Read the CAPTCHA digits when the field is focused
+    const curChallenge = challengeRef.current;
+    let msg =
+      'You are now in the Audio Verification Code field. ';
+    if (curChallenge) {
+      const spoken = formatCaptchaForSpeech(curChallenge.phrase);
+      msg += `The verification code is: ${spoken}. Type these four digits now. ` +
+             'Press R at any time to hear the code again.';
+    } else {
+      msg += 'Press R to play the audio verification code, then type the four digits.';
+    }
+    announce(msg, 'assertive');
+    speakText(msg);
+  }, [announce, speakText, challengeRef]);
+
+  // ─── Email Read-Back on Blur ─────────────────────────────────────────────────
+  // When user leaves the email field, spell out what was entered, then confirm.
+  const handleEmailBlur = useCallback(() => {
+    activeFieldRef.current = null;
+    const val = identifierRef.current.trim();
+    if (!val) return;
+
+    // Spell the email out letter-by-letter
+    const spelled = val.split('').map(ch => {
+      if (ch === '@') return 'at';
+      if (ch === '.') return 'dot';
+      if (ch === '_') return 'underscore';
+      if (ch === '-') return 'hyphen';
+      if (ch === '+') return 'plus';
+      return ch.toUpperCase();
+    }).join(', ');
+
+    const msg =
+      `You entered the email: ${spelled}. ` +
+      'Is this correct? Press Y to confirm or N to clear and re-enter. ' +
+      'Press F 2 at any time to re-read the email.';
+    announce(msg, 'assertive');
+    speakText(msg);
+    emailConfirmedRef.current = false;
+  }, [announce, speakText, identifierRef]);
+
+  // ─── Password Read-Back on Blur ──────────────────────────────────────────────
+  const handlePasswordBlur = useCallback(() => {
+    activeFieldRef.current = null;
+    const val = passwordRef.current.trim();
+    if (!val) return;
+    const msg =
+      'Password entered. Your password is hidden for security. ' +
+      'Press Y to confirm and move to the verification code, or N to clear and re-enter.';
+    announce(msg, 'assertive');
+    speakText(msg);
+  }, [announce, speakText, passwordRef]);
+
+  // ─── CAPTCHA Read-Back on Blur ───────────────────────────────────────────────
+  const handleCaptchaBlur = useCallback(() => {
+    activeFieldRef.current = null;
+    const val = captchaInputRefVal.current.trim();
+    if (!val) return;
+    const digits = val.split('').join(', ');
+    const msg =
+      `You entered verification digits: ${digits}. ` +
+      'Is this correct? Press Y to confirm, N to clear, or R to replay the audio code.';
+    announce(msg, 'assertive');
+    speakText(msg);
+  }, [announce, speakText, captchaInputRefVal]);
+
+  // ─── F2: Re-Read Current Field Value ─────────────────────────────────────────
+  const handleReReadCurrentField = useCallback(() => {
+    const field = activeFieldRef.current;
+    if (field === 'email') {
+      const val = identifierRef.current.trim();
+      if (!val) {
+        const msg = 'The Email ID field is currently empty. Type your registered email address.';
+        announce(msg, 'assertive'); speakText(msg); return;
+      }
+      const spelled = val.split('').map(ch => {
+        if (ch === '@') return 'at';
+        if (ch === '.') return 'dot';
+        if (ch === '_') return 'underscore';
+        if (ch === '-') return 'hyphen';
+        if (ch === '+') return 'plus';
+        return ch.toUpperCase();
+      }).join(', ');
+      const msg = `Your email address is: ${spelled}.`;
+      announce(msg, 'assertive'); speakText(msg);
+    } else if (field === 'password') {
+      const val = passwordRef.current.trim();
+      const msg = val
+        ? 'Password field has an entry. Your password is private and will not be read aloud.'
+        : 'The Password field is currently empty. Type your password.';
+      announce(msg, 'assertive'); speakText(msg);
+    } else if (field === 'captcha') {
+      const val = captchaInputRefVal.current.trim();
+      if (!val) {
+        const curChallenge = challengeRef.current;
+        const spoken = curChallenge ? formatCaptchaForSpeech(curChallenge.phrase) : 'not loaded';
+        const msg = `The Verification Code field is empty. The code is: ${spoken}.`;
+        announce(msg, 'assertive'); speakText(msg);
+      } else {
+        const digits = val.split('').join(', ');
+        const msg = `You have entered verification digits: ${digits}.`;
+        announce(msg, 'assertive'); speakText(msg);
+      }
+    } else {
+      // No field focused — summarise all fields
+      const emailVal = identifierRef.current.trim();
+      const pwdVal = passwordRef.current.trim();
+      const capVal = captchaInputRefVal.current.trim();
+      const emailStatus = emailVal
+        ? `Email: ${emailVal.split('').map(ch => ch === '@' ? 'at' : ch === '.' ? 'dot' : ch.toUpperCase()).join(', ')}.`
+        : 'Email: empty.';
+      const pwdStatus = pwdVal ? 'Password: entered (hidden).' : 'Password: empty.';
+      const capStatus = capVal ? `Verification Code: ${capVal.split('').join(', ')}.` : 'Verification Code: empty.';
+      const msg = `Form status — ${emailStatus} ${pwdStatus} ${capStatus} Press S to submit.`;
+      announce(msg, 'assertive'); speakText(msg);
+    }
+  }, [announce, speakText, identifierRef, passwordRef, captchaInputRefVal, challengeRef]);
+
+  // ─── Pre-Submit Voice Confirmation ───────────────────────────────────────────
+  // Reads out all fields before submitting. User must press Y/Enter or N.
+  const [awaitingSubmitConfirmation, setAwaitingSubmitConfirmation] = useState(false);
+  const awaitingSubmitRef = useRef(false);
+
+  const handlePreSubmitConfirmation = useCallback(() => {
+    const emailVal = identifierRef.current.trim();
+    const pwdVal = passwordRef.current.trim();
+    const capVal = captchaInputRefVal.current.trim();
+
+    if (!emailVal) {
+      const msg = 'Email ID is missing. Press L to focus the email field and type your address.';
+      announce(msg, 'assertive'); speakText(msg);
+      emailInputRef.current?.focus(); return;
+    }
+    if (!pwdVal) {
+      const msg = 'Password is missing. Press P to focus the password field and type your password.';
+      announce(msg, 'assertive'); speakText(msg);
+      passwordInputRef.current?.focus(); return;
+    }
+    if (!capVal) {
+      const msg = 'Verification code is missing. Press C to auto-fill or R to hear the code.';
+      announce(msg, 'assertive'); speakText(msg);
+      captchaInputRef.current?.focus(); return;
+    }
+
+    // Build confirmation summary
+    const spelled = emailVal.split('').map(ch => {
+      if (ch === '@') return 'at';
+      if (ch === '.') return 'dot';
+      if (ch === '_') return 'underscore';
+      if (ch === '-') return 'hyphen';
+      if (ch === '+') return 'plus';
+      return ch.toUpperCase();
+    }).join(', ');
+    const capDigits = capVal.split('').join(', ');
+
+    const confirmMsg =
+      `Please confirm before signing in. ` +
+      `Email: ${spelled}. ` +
+      `Password: entered and hidden. ` +
+      `Verification Code: ${capDigits}. ` +
+      `Is everything correct? Press Y or Enter to sign in, or N to go back and correct.`;
+
+    setAwaitingSubmitConfirmation(true);
+    awaitingSubmitRef.current = true;
+    announce(confirmMsg, 'assertive');
+    speakText(confirmMsg);
+  }, [announce, speakText, identifierRef, passwordRef, captchaInputRefVal, emailInputRef, passwordInputRef, captchaInputRef]);
 
   const speakAndRecord = useCallback(
     (text: string, onEnd?: () => void) => {
       lastPromptRef.current = text;
       announce(text, 'polite');
-      speakText(text, onEnd);
+      if (interactionMode !== 'manual') {
+        speakText(text, onEnd);
+      } else if (onEnd) {
+        onEnd();
+      }
     },
-    [announce, speakText]
+    [announce, speakText, interactionMode]
   );
 
   // Fetch initial or refreshed Audio CAPTCHA challenge
@@ -122,6 +334,7 @@ export function LoginScreen() {
       setVerificationToken(null);
       setVerifiedForInput('');
       setCaptchaInput('');
+      setRecognizedCaptchaDigits('');
       try {
         const res = await fetch('/api/auth/challenge');
         if (res.ok) {
@@ -136,7 +349,7 @@ export function LoginScreen() {
 
           if (readDigitsOnLoad) {
             const spokenDigits = formatCaptchaForSpeech(newChallenge.phrase);
-            const msg = `New audio verification code generated: ${spokenDigits} Please say or type these four digits.`;
+            const msg = `Your verification code is: ${spokenDigits} Please repeat these four digits now.`;
             speakAndRecord(msg, () => startVoiceListening());
           } else if (announceNew) {
             const spokenDigits = formatCaptchaForSpeech(newChallenge.phrase);
@@ -156,83 +369,67 @@ export function LoginScreen() {
     [speakAndRecord, startVoiceListening]
   );
 
-  // Load CAPTCHA on initial mount & announce Login Introduction once per screen visit
+  // Load CAPTCHA challenge on mount
   useEffect(() => {
-    fetchNewChallenge(false, false);
+    fetchNewChallenge();
+  }, [fetchNewChallenge]);
 
+  // Initial welcome announcement on mount (only in voice mode, avoiding unwanted interruptions in manual mode)
+  useEffect(() => {
     if (!hasAnnouncedIntroRef.current) {
       hasAnnouncedIntroRef.current = true;
-      lastPromptRef.current = LOGIN_INTRO_MESSAGE;
+      if (interactionMode === 'voice') {
+        speakAndRecord(LOGIN_INTRO_MESSAGE);
+      } else {
+        announce(LOGIN_INTRO_MESSAGE, 'polite');
+      }
     }
+  }, [speakAndRecord, announce, interactionMode]);
 
-    return () => {
-      stopSpeaking();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Watch for microphone permission denial
-  useEffect(() => {
-    if (micPermissionStatus === 'denied' && (voiceStep !== 'idle' || isCapturingCaptchaVoice)) {
-      setVoiceStep('idle');
-      setIsCapturingCaptchaVoice(false);
-      const msg =
-        'Microphone permission was denied. Switched to keyboard input mode. You can complete all fields using your keyboard.';
-      setFormError(msg);
-      announce(msg, 'assertive');
-      speakText(msg);
-      emailInputRef.current?.focus();
-    } else if (micPermissionStatus === 'unsupported' && (voiceStep !== 'idle' || isCapturingCaptchaVoice)) {
-      setVoiceStep('idle');
-      setIsCapturingCaptchaVoice(false);
-      const msg =
-        'Speech recognition is unavailable in this browser. Switched to keyboard input mode.';
-      setFormError(msg);
-      announce(msg, 'assertive');
-      speakText(msg);
-      emailInputRef.current?.focus();
-    }
-  }, [micPermissionStatus, voiceStep, isCapturingCaptchaVoice, announce, speakText]);
-
-  // Read Audio CAPTCHA digits aloud with short pauses ("Five ... Eight ... Three ... Two.")
+  // Play audio digits aloud
   const handlePlayCaptchaAudio = useCallback(() => {
-    const cur = challengeRef.current;
-    if (!cur) {
-      fetchNewChallenge(true, false);
+    if (!challenge) {
+      fetchNewChallenge(false, true);
       return;
     }
-    const spokenDigits = formatCaptchaForSpeech(cur.phrase);
-    const msg = `Audio verification code: ${spokenDigits} Enter or speak these four digits.`;
-    speakAndRecord(msg);
-  }, [fetchNewChallenge, speakAndRecord]);
+    const spoken = formatCaptchaForSpeech(challenge.phrase);
+    const audioMsg = `Your verification code is: ${spoken}. Enter or repeat these four digits.`;
+    announce(audioMsg, 'assertive');
+    speakText(audioMsg);
+  }, [challenge, fetchNewChallenge, announce, speakText]);
 
-  // Verify CAPTCHA response against backend `/api/auth/verify-challenge`
+  // Verify CAPTCHA digits against the backend
   const verifyCaptchaCode = useCallback(
-    async (rawInput: string, inGuidedFlow = false): Promise<string | null> => {
+    async (spokenOrTyped: string, inGuidedFlow = false): Promise<string | null> => {
       const curChallenge = challengeRef.current;
       if (!curChallenge) {
-        const msg = 'Audio verification code is not loaded yet. Generating a new code now.';
-        setCaptchaError(msg);
-        await fetchNewChallenge(true, inGuidedFlow);
+        setCaptchaError('Verification challenge expired. Loading a new challenge.');
+        await fetchNewChallenge(false, false);
         return null;
       }
 
-      const cleanDigits = extractDigits(rawInput);
-      if (!cleanDigits) {
-        const msg = 'Please enter or speak the four digits from the audio verification code.';
-        setCaptchaError(msg);
-        announce(msg, 'assertive');
-        speakText(msg, inGuidedFlow ? () => startVoiceListening() : undefined);
+      const cleanDigits = extractDigits(spokenOrTyped);
+      if (!cleanDigits || cleanDigits.length !== 4) {
+        const errorMsg = 'Audio verification code must be exactly four digits.';
+        setCaptchaError(errorMsg);
+        announce(errorMsg, 'assertive');
+        speakAndRecord(
+          inGuidedFlow
+            ? `${errorMsg} Please repeat the four verification digits clearly.`
+            : errorMsg,
+          inGuidedFlow ? () => startVoiceListening() : undefined
+        );
         return null;
+      }
+
+      // Check if already verified for this exact challenge and input
+      const verificationKey = `${curChallenge.challengeId}:${cleanDigits}`;
+      if (verificationToken && verifiedForInput === verificationKey) {
+        return verificationToken;
       }
 
       setCaptchaInput(cleanDigits);
       captchaInputRefVal.current = cleanDigits;
-
-      // Reuse already-verified token if input hasn't changed for this challenge
-      if (verificationToken && verifiedForInput === `${curChallenge.challengeId}:${cleanDigits}`) {
-        return verificationToken;
-      }
 
       try {
         const res = await fetch('/api/auth/verify-challenge', {
@@ -245,15 +442,13 @@ export function LoginScreen() {
         });
 
         const data = await res.json();
-        if (!res.ok || !data.success || !data.verificationToken) {
+        if (!res.ok || !data.success) {
           setVerificationToken(null);
           setVerifiedForInput('');
-          const errMsg =
-            'Audio verification code did not match. Generating a fresh code for you.';
+          const errMsg = 'Audio verification code did not match. Generating a fresh code for you.';
           setCaptchaError(errMsg);
           announce(errMsg, 'assertive');
 
-          // Regenerate CAPTCHA per Section 7 and read new code if in guided flow
           const refreshed = await fetchNewChallenge(false, false);
           if (refreshed) {
             const newSpoken = formatCaptchaForSpeech(refreshed.phrase);
@@ -288,7 +483,7 @@ export function LoginScreen() {
     ]
   );
 
-  // Core authentication submission (used by both manual form submit and Voice Login Step 9)
+  // Core authentication submission
   const executeSignIn = useCallback(
     async (preVerifiedToken?: string | null) => {
       if (loading) return;
@@ -336,7 +531,7 @@ export function LoginScreen() {
       announce('Authentication in progress. Verifying your credentials...', 'polite');
 
       try {
-        // Step A: Validate credentials first against `/api/auth/validate-credentials`
+        // Step A: Validate credentials first
         const credRes = await fetch('/api/auth/validate-credentials', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -356,7 +551,7 @@ export function LoginScreen() {
           return;
         }
 
-        // Step B: Verify Audio CAPTCHA if not already verified
+        // Step B: Verify Audio CAPTCHA
         let tokenToUse = preVerifiedToken || verificationToken;
         if (!tokenToUse) {
           tokenToUse = await verifyCaptchaCode(curCaptcha, voiceStepRef.current !== 'idle');
@@ -379,13 +574,12 @@ export function LoginScreen() {
 
         const loginData = await loginRes.json();
         if (!loginRes.ok || !loginData.success) {
-          // If token expired or was consumed, refresh CAPTCHA
           await fetchNewChallenge(false, false);
           throw new Error(loginData.error || 'Unable to sign in. Please verify your details and try again.');
         }
 
         // Step D: Announce success and navigate to Dashboard
-        const welcomeMsg = 'Welcome back. You have successfully signed in. Opening your dashboard.';
+        const welcomeMsg = 'Your login was successful. Opening your dashboard.';
         setSuccessMessage(welcomeMsg);
         setVoiceStep('idle');
         announce(welcomeMsg, 'assertive');
@@ -410,12 +604,32 @@ export function LoginScreen() {
       verificationToken,
       verifyCaptchaCode,
       fetchNewChallenge,
-      loginUser,
-      navigateTo,
       announce,
-      speakText
+      speakText,
+      loginUser,
+      navigateTo
     ]
   );
+
+  // Manual Form Submission Handler
+  const handleFormSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await executeSignIn();
+  };
+
+  // Optional Developer / Tester Demo Credentials Helper
+  const handleFillDemoCredentials = () => {
+    setIdentifier('candidate@accessprep.nic.in');
+    identifierRef.current = 'candidate@accessprep.nic.in';
+    setPassword('candidate123');
+    passwordRef.current = 'candidate123';
+    setIdentifierError(null);
+    setPasswordError(null);
+    announce('Demo credentials loaded for Aarav Sharma (candidate@accessprep.nic.in). Please complete Audio CAPTCHA to sign in.', 'polite');
+    setTimeout(() => {
+      captchaInputRef.current?.focus();
+    }, 50);
+  };
 
   // Voice-Guided Login Workflow Controls
   const handleStartVoiceLogin = useCallback(() => {
@@ -428,7 +642,7 @@ export function LoginScreen() {
     voiceStepRef.current = 'ask_email';
 
     const prompt =
-      'Voice-guided login started. Please provide your registered email address and password. Step 1 of 4: Please say your registered email address or candidate roll number clearly.';
+      'Welcome to ACCESSPREP-X. Let us sign you in. Please say your registered email address or roll number clearly.';
     speakAndRecord(prompt, () => {
       startVoiceListening();
     });
@@ -452,10 +666,220 @@ export function LoginScreen() {
     }, 50);
   }, [stopSpeaking, stopVoiceListening, announce, speakText]);
 
-  // Advance from Password Step (Step 5) to Audio CAPTCHA Step (Step 6)
+  // Blind-Friendly Auto-Fill CAPTCHA (Triggered by pressing 'C')
+  const handleAutoFillCaptcha = useCallback(async () => {
+    let curChallenge = challengeRef.current;
+    if (!curChallenge) {
+      curChallenge = await fetchNewChallenge(false, false);
+    }
+    if (!curChallenge) {
+      const msg = 'Verification code is still loading. Please press C again in a moment.';
+      announce(msg, 'assertive');
+      speakText(msg);
+      return;
+    }
+
+    const cleanDigits = curChallenge.phrase.replace(/\D/g, '');
+    setCaptchaInput(cleanDigits);
+    captchaInputRefVal.current = cleanDigits;
+    setCaptchaError(null);
+
+    const token = await verifyCaptchaCode(cleanDigits, false);
+    const spokenDigits = formatCaptchaForSpeech(curChallenge.phrase);
+    const msg = `Audio verification code auto-entered: ${spokenDigits}. CAPTCHA verified. Press S or activate Sign In when ready.`;
+    announce(msg, 'assertive');
+    speakText(msg);
+  }, [fetchNewChallenge, verifyCaptchaCode, announce, speakText]);
+
+  // Blind-Friendly Single-Key Shortcut Handlers
+  const handleFocusEmail = useCallback(() => {
+    emailInputRef.current?.focus();
+    const msg = 'Email field focused. You can now type your registered email address or roll number.';
+    announce(msg, 'assertive');
+    speakText(msg);
+  }, [announce, speakText]);
+
+  const handleFocusPassword = useCallback(() => {
+    passwordInputRef.current?.focus();
+    const msg = 'Password field focused. Please enter your confidential password using your keyboard.';
+    announce(msg, 'assertive');
+    speakText(msg);
+  }, [announce, speakText]);
+
+  const handleQuickSubmit = useCallback(async () => {
+    // Always run pre-submit confirmation when triggered by shortcut
+    handlePreSubmitConfirmation();
+  }, [handlePreSubmitConfirmation]);
+
+  const handleReadKeyboardShortcuts = useCallback(() => {
+    const constantDescription =
+      'ACCESSPREP-X Login Keyboard Shortcuts: ' +
+      'Press L to focus the Email ID field. ' +
+      'Press P to focus the Password field. ' +
+      'Press C to auto-fill the audio verification code. ' +
+      'Press S to review and confirm all fields before signing in. ' +
+      'Press R to play the audio verification code aloud. ' +
+      'Press F 2 to re-read the value of the currently focused field. ' +
+      'Press Y to confirm a field read-back or to approve the final submission. ' +
+      'Press N to clear and re-enter a field, or to cancel submission. ' +
+      'Press K to hear all these shortcuts again. ' +
+      'Press H for full login help. ' +
+      'Press Escape to stop speech and exit a field. ' +
+      'The microphone is always listening for your voice commands.';
+    announce(constantDescription, 'assertive');
+    speakText(constantDescription);
+  }, [announce, speakText]);
+
+  // Register single-key shortcuts & auto-fill listener for LoginScreen
+  useEffect(() => {
+    const onAutoFill = () => {
+      handleAutoFillCaptcha();
+    };
+    window.addEventListener('accessprep:auto-fill-captcha', onAutoFill);
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      const isTyping = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+
+      // F2: Re-read current field value (works even while typing)
+      if (e.key === 'F2') {
+        e.preventDefault();
+        handleReReadCurrentField();
+        return;
+      }
+
+      if (isTyping) {
+        // Y/N confirmations work even while focus is in a field
+        if (e.key.toLowerCase() === 'y' && e.altKey) {
+          e.preventDefault();
+          if (awaitingSubmitRef.current) {
+            setAwaitingSubmitConfirmation(false);
+            awaitingSubmitRef.current = false;
+            const msg = 'Confirmed. Signing in now...';
+            announce(msg, 'assertive'); speakText(msg);
+            executeSignIn();
+          }
+          return;
+        }
+        if (e.key === 'Escape') {
+          target.blur();
+          stopSpeaking();
+          announce('Exited text field. Shortcuts active: L for Email, P for Password, C for CAPTCHA, S to review and sign in, F 2 to re-read field, K for all shortcuts.', 'polite');
+        }
+        return;
+      }
+
+      const key = e.key.toLowerCase();
+
+      // Y: Confirm current field or confirm submission
+      if (key === 'y') {
+        e.preventDefault();
+        if (awaitingSubmitRef.current) {
+          setAwaitingSubmitConfirmation(false);
+          awaitingSubmitRef.current = false;
+          const msg = 'Confirmed. Signing in now...';
+          announce(msg, 'assertive'); speakText(msg);
+          executeSignIn();
+        } else {
+          // Confirm current email read-back
+          if (!identifierRef.current.trim()) {
+            const msg = 'Nothing to confirm. Email field is empty.';
+            announce(msg, 'assertive'); speakText(msg);
+          } else {
+            emailConfirmedRef.current = true;
+            const msg = 'Email confirmed. Press P to move to the Password field.';
+            announce(msg, 'assertive'); speakText(msg);
+            setTimeout(() => passwordInputRef.current?.focus(), 100);
+          }
+        }
+        return;
+      }
+
+      // N: Clear current field or cancel submission
+      if (key === 'n') {
+        e.preventDefault();
+        if (awaitingSubmitRef.current) {
+          setAwaitingSubmitConfirmation(false);
+          awaitingSubmitRef.current = false;
+          const msg = 'Submission cancelled. Review your fields and press S when ready to sign in again.';
+          announce(msg, 'assertive'); speakText(msg);
+        } else {
+          // Clear and re-focus email if that was last active
+          setIdentifier(''); identifierRef.current = '';
+          emailConfirmedRef.current = false;
+          setIdentifierError(null);
+          const msg = 'Email cleared. Press L to focus the email field and type again.';
+          announce(msg, 'assertive'); speakText(msg);
+        }
+        return;
+      }
+
+      if (key === 'l' || (e.altKey && key === 'e')) {
+        e.preventDefault();
+        handleFocusEmail();
+        return;
+      }
+
+      if (key === 'p') {
+        e.preventDefault();
+        handleFocusPassword();
+        return;
+      }
+
+      if (key === 'c') {
+        e.preventDefault();
+        handleAutoFillCaptcha();
+        return;
+      }
+
+      if (key === 's') {
+        e.preventDefault();
+        handleQuickSubmit();
+        return;
+      }
+
+      if (key === 'r') {
+        e.preventDefault();
+        handlePlayCaptchaAudio();
+        return;
+      }
+
+      if (key === 'k') {
+        e.preventDefault();
+        handleReadKeyboardShortcuts();
+        return;
+      }
+
+      if (key === 'h') {
+        e.preventDefault();
+        handleReadLoginGuide();
+        return;
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('accessprep:auto-fill-captcha', onAutoFill);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [
+    handleAutoFillCaptcha,
+    handleFocusEmail,
+    handleFocusPassword,
+    handleQuickSubmit,
+    handlePlayCaptchaAudio,
+    handleReadKeyboardShortcuts,
+    handleReadLoginGuide,
+    handleReReadCurrentField,
+    executeSignIn,
+    stopSpeaking,
+    announce
+  ]);
+
+  // Advance from Password Step to Audio CAPTCHA Step
   const advanceFromPasswordToCaptcha = useCallback(async () => {
     if (!passwordRef.current.trim()) {
-      const msg = 'Password field is empty. Please type your password using your keyboard and press Enter.';
+      const msg = 'Password field is empty. Please enter your password using your keyboard and say Continue or press Enter.';
       setPasswordError(msg);
       speakAndRecord(msg);
       passwordInputRef.current?.focus();
@@ -468,40 +892,11 @@ export function LoginScreen() {
       curChallenge = await fetchNewChallenge(false, false);
     }
 
-    setVoiceStep('verify_captcha');
-    voiceStepRef.current = 'verify_captcha';
+    setVoiceStep('ask_captcha');
+    voiceStepRef.current = 'ask_captcha';
 
     const spokenDigits = curChallenge ? formatCaptchaForSpeech(curChallenge.phrase) : '';
-    const prompt = `Password entered securely. Step 3 of 4: Audio verification code. Listen carefully to the four digits: ${spokenDigits} Please say these four digits now, or type them and press Enter.`;
-    speakAndRecord(prompt, () => {
-      startVoiceListening();
-    });
-  }, [fetchNewChallenge, speakAndRecord, startVoiceListening]);
-
-  // Single-field voice capture for CAPTCHA button when not in full guided mode
-  const handleStartCaptchaVoiceCapture = useCallback(() => {
-    if (!challengeRef.current) return;
-    setCaptchaError(null);
-    setIsCapturingCaptchaVoice(true);
-    isCapturingCaptchaVoiceRef.current = true;
-    announce('Listening for the four audio verification digits. Please speak now.', 'polite');
-    startVoiceListening();
-  }, [announce, startVoiceListening]);
-
-  // Start full audio CAPTCHA flow: reads digits aloud, then begins listening for user response
-  const handleStartAudioCaptchaFlow = useCallback(async () => {
-    let curChallenge = challengeRef.current;
-    if (!curChallenge) {
-      curChallenge = await fetchNewChallenge(false, false);
-    }
-    if (!curChallenge) return;
-
-    setCaptchaError(null);
-    setIsCapturingCaptchaVoice(true);
-    isCapturingCaptchaVoiceRef.current = true;
-
-    const spokenDigits = formatCaptchaForSpeech(curChallenge.phrase);
-    const prompt = `Audio verification code: ${spokenDigits} Please say these four digits now, or type them using your keyboard.`;
+    const prompt = `Password entered securely. Audio verification code: Listen carefully to the four digits: ${spokenDigits} Please repeat these four digits now, or enter them using your keyboard.`;
     speakAndRecord(prompt, () => {
       startVoiceListening();
     });
@@ -544,7 +939,11 @@ export function LoginScreen() {
         return true;
       }
       if (cmd === 'start_audio_captcha') {
-        await handleStartAudioCaptchaFlow();
+        let curChallenge = challengeRef.current || (await fetchNewChallenge(false, false));
+        if (curChallenge) {
+          const spoken = formatCaptchaForSpeech(curChallenge.phrase);
+          speakAndRecord(`Audio verification code: ${spoken}. Please say these four digits now.`, () => startVoiceListening());
+        }
         return true;
       }
       if (cmd === 'read_captcha') {
@@ -552,7 +951,7 @@ export function LoginScreen() {
         return true;
       }
       if (cmd === 'refresh_captcha') {
-        await fetchNewChallenge(true, voiceStepRef.current === 'verify_captcha');
+        await fetchNewChallenge(true, voiceStepRef.current === 'ask_captcha');
         return true;
       }
       if (cmd === 'use_keyboard') {
@@ -573,25 +972,30 @@ export function LoginScreen() {
         return true;
       }
 
-      // 2. Standalone CAPTCHA voice button capture
-      if (isCapturingCaptchaVoiceRef.current && voiceStepRef.current === 'idle') {
-        setIsCapturingCaptchaVoice(false);
-        isCapturingCaptchaVoiceRef.current = false;
-        const token = await verifyCaptchaCode(rawTranscript, false);
-        if (token) {
-          speakAndRecord('Audio verification code matched. You may now press Sign In.');
-        }
-        return true;
-      }
-
-      // 3. Guided Multi-Step Voice Login Workflow
+      // 2. Guided Multi-Step Voice Login State Machine
       const step = voiceStepRef.current;
       if (step === 'idle') {
         return false;
       }
 
+      // STEP 1: Email / Identifier Capture
       if (step === 'ask_email') {
-        const normalized = normalizeSpokenEmail(rawTranscript);
+        const analysis = analyzeSpokenEmail(rawTranscript);
+
+        if (analysis.isAmbiguous && analysis.suggestedOptions && analysis.suggestedOptions.length > 0) {
+          setAmbiguousOptions(analysis.suggestedOptions);
+          setVoiceStep('ambiguous_email');
+          voiceStepRef.current = 'ambiguous_email';
+
+          const prompt =
+            `I heard your email, but no separator like dot or underscore was detected between your names. ` +
+            `Is your email ${analysis.suggestedOptions[0]}, ${analysis.suggestedOptions[1]}, or all one word? ` +
+            `Please say DOT, UNDERSCORE, or ONE WORD, or spell out your email.`;
+          speakAndRecord(prompt, () => startVoiceListening());
+          return true;
+        }
+
+        const normalized = analysis.normalized || normalizeSpokenEmail(rawTranscript);
         if (!normalized) {
           speakAndRecord(
             'I could not catch your email address. Please say your registered email address or candidate roll number again.',
@@ -599,6 +1003,7 @@ export function LoginScreen() {
           );
           return true;
         }
+
         setIdentifier(normalized);
         identifierRef.current = normalized;
         setIdentifierError(null);
@@ -607,12 +1012,53 @@ export function LoginScreen() {
 
         const spelledOut = spellOutIdentifier(normalized);
         speakAndRecord(
-          `I heard your identifier as ${normalized}. Spelled out: ${spelledOut}. Is this correct? Say Yes to confirm, or No to re-enter.`,
+          `I heard your email address. I will spell it out for confirmation: ${spelledOut}. Is this your correct email address? Say YES to confirm or NO to enter it again.`,
           () => startVoiceListening()
         );
         return true;
       }
 
+      // STEP 1B: Ambiguous Email Clarification
+      if (step === 'ambiguous_email') {
+        const t = rawTranscript.toLowerCase().trim();
+        let chosen: string | null = null;
+        if (t.includes('dot') || t.includes('period')) {
+          chosen = ambiguousOptions[0] || null;
+        } else if (t.includes('underscore')) {
+          chosen = ambiguousOptions[1] || null;
+        } else if (t.includes('hyphen') || t.includes('dash')) {
+          chosen = ambiguousOptions[2] || null;
+        } else if (t.includes('one word') || t.includes('together') || t.includes('combined')) {
+          chosen = ambiguousOptions[3] || null;
+        } else {
+          // Check if candidate is spelling their email
+          const reconstructed = reconstructSpelledEmail(rawTranscript);
+          if (reconstructed && reconstructed.includes('@')) {
+            chosen = reconstructed;
+          }
+        }
+
+        if (chosen) {
+          setIdentifier(chosen);
+          identifierRef.current = chosen;
+          setVoiceStep('confirm_email');
+          voiceStepRef.current = 'confirm_email';
+          const spelledOut = spellOutIdentifier(chosen);
+          speakAndRecord(
+            `Thank you for clarifying. I will spell it out for confirmation: ${spelledOut}. Is this your correct email address? Say YES to confirm or NO to enter it again.`,
+            () => startVoiceListening()
+          );
+          return true;
+        }
+
+        speakAndRecord(
+          'Please say DOT, UNDERSCORE, or ONE WORD, or spell out your email letter by letter.',
+          () => startVoiceListening()
+        );
+        return true;
+      }
+
+      // STEP 2: Email Confirmation
       if (step === 'confirm_email') {
         const confirmation = parseConfirmationIntent(rawTranscript.toLowerCase());
         if (confirmation === 'yes') {
@@ -634,28 +1080,32 @@ export function LoginScreen() {
           }, 50);
 
           speakAndRecord(
-            'Identifier confirmed. Step 2 of 4: Secure password entry. For your security, passwords are never spoken aloud. The password field is now focused. Please type your password on your keyboard and press Enter when finished, or say Continue after typing.',
+            'Identifier confirmed. Your password field is now focused. Please enter your password using your keyboard. Your password will remain private and will never be spoken aloud. After entering your password, say Continue or press Enter.',
             () => startVoiceListening()
           );
           return true;
         }
 
         if (confirmation === 'no') {
+          setIdentifier('');
+          identifierRef.current = '';
           setVoiceStep('ask_email');
           voiceStepRef.current = 'ask_email';
-          speakAndRecord('Let us try again. Please say your registered email address or roll number clearly.', () =>
-            startVoiceListening()
+          speakAndRecord(
+            'Let us try again. Please say your registered email address or roll number clearly.',
+            () => startVoiceListening()
           );
           return true;
         }
 
         speakAndRecord(
-          `Please say Yes to confirm ${identifierRef.current}, or say No to re-enter.`,
+          `Please say YES to confirm ${identifierRef.current}, or say NO to enter it again.`,
           () => startVoiceListening()
         );
         return true;
       }
 
+      // STEP 3: Password Entry (Privacy Protected)
       if (step === 'enter_password') {
         const clean = rawTranscript.toLowerCase().trim();
         if (
@@ -668,27 +1118,80 @@ export function LoginScreen() {
           await advanceFromPasswordToCaptcha();
           return true;
         }
-        // Remind user never to speak password aloud
+        // Protect user privacy: never speak password aloud
         speakAndRecord(
-          'For your protection, please do not speak your password aloud. Type your password in the focused password box and press Enter.',
+          'For your protection, passwords are never spoken aloud. Please type your password in the focused password field using your keyboard, then say Continue or press Enter.',
           () => startVoiceListening()
         );
         return true;
       }
 
-      if (step === 'verify_captcha') {
-        const token = await verifyCaptchaCode(rawTranscript, true);
-        if (token) {
-          setVoiceStep('confirm_submit');
-          voiceStepRef.current = 'confirm_submit';
+      // STEP 4: Spoken Audio CAPTCHA Capture
+      if (step === 'ask_captcha') {
+        const cleanDigits = extractDigits(rawTranscript);
+        if (!cleanDigits || cleanDigits.length !== 4) {
           speakAndRecord(
-            `Audio verification code confirmed. Step 4 of 4: Ready to sign in as ${identifierRef.current}. Say Yes or Sign In to access your dashboard, or say No to cancel.`,
+            `I heard ${cleanDigits ? cleanDigits.split('').join(' ') : 'no digits'}, but a 4-digit code is required. Please repeat the four verification digits.`,
             () => startVoiceListening()
           );
+          return true;
         }
+
+        setRecognizedCaptchaDigits(cleanDigits);
+        recognizedCaptchaDigitsRef.current = cleanDigits;
+        setCaptchaInput(cleanDigits);
+        captchaInputRefVal.current = cleanDigits;
+        setVoiceStep('confirm_captcha');
+        voiceStepRef.current = 'confirm_captcha';
+
+        const spokenDigits = formatCaptchaForSpeech(cleanDigits);
+        speakAndRecord(
+          `I heard: ${spokenDigits} Is that correct? Say YES to confirm or NO to repeat.`,
+          () => startVoiceListening()
+        );
         return true;
       }
 
+      // STEP 5: CAPTCHA Confirmation (YES/NO)
+      if (step === 'confirm_captcha') {
+        const confirmation = parseConfirmationIntent(rawTranscript.toLowerCase());
+        if (confirmation === 'yes') {
+          const digits = recognizedCaptchaDigitsRef.current;
+          const token = await verifyCaptchaCode(digits, true);
+          if (token) {
+            setVoiceStep('confirm_submit');
+            voiceStepRef.current = 'confirm_submit';
+            speakAndRecord(
+              `Audio verification code confirmed. Ready to sign in as ${identifierRef.current}. Say YES or Sign In to access your dashboard, or say NO to cancel.`,
+              () => startVoiceListening()
+            );
+          }
+          return true;
+        }
+
+        if (confirmation === 'no') {
+          setRecognizedCaptchaDigits('');
+          recognizedCaptchaDigitsRef.current = '';
+          setCaptchaInput('');
+          captchaInputRefVal.current = '';
+          setVoiceStep('ask_captcha');
+          voiceStepRef.current = 'ask_captcha';
+          speakAndRecord(
+            'Let us try again. Please listen to the four verification digits and repeat them clearly.',
+            () => startVoiceListening()
+          );
+          return true;
+        }
+
+        const spokenDigits = formatCaptchaForSpeech(recognizedCaptchaDigitsRef.current);
+        speakAndRecord(
+          `Please say YES to confirm ${spokenDigits}, or say NO to repeat.`,
+          () => startVoiceListening()
+        );
+        return true;
+      }
+
+      // STEP 6: Final Submission Confirmation
       if (step === 'confirm_submit') {
         const clean = rawTranscript.toLowerCase().trim();
         const confirmation = parseConfirmationIntent(clean);
@@ -702,8 +1205,9 @@ export function LoginScreen() {
           speakAndRecord('Voice sign-in cancelled. You can review the form or press Sign In when ready.');
           return true;
         }
-        speakAndRecord('Please say Yes or Sign In to complete authentication, or say No to cancel.', () =>
-          startVoiceListening()
+        speakAndRecord(
+          'Please say YES or Sign In to complete authentication, or say NO to cancel.',
+          () => startVoiceListening()
         );
         return true;
       }
@@ -731,302 +1235,344 @@ export function LoginScreen() {
     verificationToken
   ]);
 
-  // Keyboard shortcuts on Login page
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement;
-      const isInput = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
-
-      if (e.altKey && e.key.toLowerCase() === 'r') {
-        e.preventDefault();
-        handlePlayCaptchaAudio();
-        return;
-      }
-      if (
-        (e.ctrlKey && (e.code === 'Space' || e.key === ' ')) ||
-        (e.altKey && e.key.toLowerCase() === 's')
-      ) {
-        e.preventDefault();
-        handleStartAudioCaptchaFlow();
-        return;
-      }
-
-      if (!isInput) {
-        const k = e.key.toLowerCase();
-        if (k === 'v') {
-          e.preventDefault();
-          handleStartVoiceLogin();
-        } else if (k === 'c') {
-          e.preventDefault();
-          handleStartAudioCaptchaFlow();
-        } else if (k === 'r') {
-          e.preventDefault();
-          fetchNewChallenge(true, voiceStepRef.current === 'verify_captcha');
-        } else if (k === 'g') {
-          e.preventDefault();
-          navigateTo('register');
-        } else if (k === 'k') {
-          e.preventDefault();
-          handleSwitchToKeyboard();
-        }
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handlePlayCaptchaAudio, handleStartCaptchaVoiceCapture, handleStartAudioCaptchaFlow, handleStartVoiceLogin, fetchNewChallenge, navigateTo, handleSwitchToKeyboard]);
-
-  const handleFormSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    await executeSignIn(verificationToken);
-  };
-
-  const fillDemoAccount = (role: 'candidate' | 'admin') => {
-    setFormError(null);
-    setIdentifierError(null);
-    setPasswordError(null);
-    setCaptchaError(null);
-
-    if (role === 'candidate') {
-      setIdentifier('candidate@accessprep.nic.in');
-      identifierRef.current = 'candidate@accessprep.nic.in';
-      setPassword('candidate123');
-      passwordRef.current = 'candidate123';
-    } else {
-      setIdentifier('evaluator@ssc.gov.in');
-      identifierRef.current = 'evaluator@ssc.gov.in';
-      setPassword('admin123');
-      passwordRef.current = 'admin123';
-    }
-
-    // Also pre-fill current CAPTCHA digits for 1-click demo convenience while keeping full verification active
-    if (challengeRef.current) {
-      const demoDigits = extractDigits(challengeRef.current.phrase);
-      setCaptchaInput(demoDigits);
-      captchaInputRefVal.current = demoDigits;
-    }
-
-    const label = role === 'candidate' ? 'Candidate Demo' : 'Academic Evaluator Admin';
-    announce(
-      `Loaded ${label} credentials and current verification digits. Activate Sign In to continue.`,
-      'polite'
-    );
-  };
-
-  const voiceStepLabels: Record<LoginVoiceStep, string> = {
-    idle: '',
-    ask_email: 'Step 1 of 4: Speak your registered email address',
-    confirm_email: `Step 1 of 4: Confirm email (${identifier || '...'}) — Say Yes or No`,
-    enter_password: 'Step 2 of 4: Type password securely on keyboard & press Enter',
-    verify_captcha: 'Step 3 of 4: Speak or type the 4-digit Audio CAPTCHA code',
-    confirm_submit: 'Step 4 of 4: Say "Yes" or "Sign In" to submit'
-  };
-
   return (
     <AuthenticationLayout
-      screenBadge="SSC MTS 2026 Portal · Screen 2 of 18"
-      headline="Your Learning Journey Starts Here."
-      supportingDescription="An accessible examination preparation platform designed to help every learner prepare independently, confidently and at their own pace."
+      screenBadge="Candidate Authentication"
+      headline="Welcome back to ACCESSPREP-X"
+      supportingDescription="Accessible, voice-first and keyboard-first examination portal for SSC MTS candidates with visual disabilities."
       features={[
         {
-          icon: <Headphones className="w-5 h-5" />,
-          title: 'Audio-first learning',
-          description:
-            'Complete screen-reader narration, natural spoken mathematics, and hands-free voice command navigation across every module.'
+          icon: <Headphones className="w-5 h-5 text-[#1749E8]" aria-hidden="true" />,
+          title: 'Audio-First Guided Login',
+          description: 'Say your email or roll number naturally. The system verifies every character before proceeding.'
         },
         {
-          icon: <ShieldCheck className="w-5 h-5" />,
-          title: 'Accessible examination experience',
-          description:
-            'Persistent non-repeating 400-question mock exam rotation with automatic RPwD Act compensatory time extensions.'
+          icon: <Key className="w-5 h-5 text-[#1749E8]" aria-hidden="true" />,
+          title: 'Secure Password Entry',
+          description: 'Confidential keyboard password entry with accessible visibility toggle, never announced aloud.'
         },
         {
-          icon: <Sparkles className="w-5 h-5" />,
-          title: 'Personalized preparation',
-          description:
-            'Adaptive Bayesian Knowledge Tracing and SuperMemo SM-2 revision schedules tailored to your individual mastery.'
+          icon: <ShieldCheck className="w-5 h-5 text-[#1749E8]" aria-hidden="true" />,
+          title: 'Accessible Audio CAPTCHA',
+          description: 'Human-verified four-digit audio code with single-use verification tokens and repetition support.'
         }
       ]}
-      leftExtra={
-        <div className="pt-2 border-t border-[#D9E1EF] dark:border-slate-700">
-          <p className="text-xs font-extrabold uppercase tracking-wider text-[#53627A] dark:text-slate-300 mb-2.5">
-            Quick Demo Access (Evaluation Accounts)
-          </p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-            <button
-              type="button"
-              onClick={() => fillDemoAccount('candidate')}
-              className="p-3 text-left rounded-xl bg-white dark:bg-slate-800 hover:bg-[#EEF4FF] dark:hover:bg-slate-700 border border-[#D9E1EF] dark:border-slate-600 transition-colors flex items-center justify-between gap-2 focus:outline-none focus:ring-2 focus:ring-[#6241C8]"
-            >
-              <div className="min-w-0">
-                <p className="text-xs font-bold text-[#172033] dark:text-white truncate">
-                  Candidate Demo Account
-                </p>
-                <p className="text-[11px] text-[#1749E8] dark:text-blue-300 font-mono truncate">
-                  candidate@accessprep.nic.in
-                </p>
-              </div>
-              <CheckCircle2 className="w-4 h-4 text-[#1749E8] dark:text-blue-400 shrink-0" aria-hidden="true" />
-            </button>
-
-            <button
-              type="button"
-              onClick={() => fillDemoAccount('admin')}
-              className="p-3 text-left rounded-xl bg-white dark:bg-slate-800 hover:bg-emerald-50 dark:hover:bg-slate-700 border border-[#D9E1EF] dark:border-slate-600 transition-colors flex items-center justify-between gap-2 focus:outline-none focus:ring-2 focus:ring-emerald-600"
-            >
-              <div className="min-w-0">
-                <p className="text-xs font-bold text-[#172033] dark:text-white truncate">
-                  Reviewer / Admin Demo
-                </p>
-                <p className="text-[11px] text-emerald-700 dark:text-emerald-300 font-mono truncate">
-                  evaluator@ssc.gov.in
-                </p>
-              </div>
-              <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" aria-hidden="true" />
-            </button>
-          </div>
-        </div>
-      }
     >
       <AuthenticationCard
-        title="Welcome Back"
-        subtitle="Sign in to continue your preparation journey."
+        title="Candidate Sign In"
+        subtitle="Access your personalized SSC MTS study portal, voice practice sessions, and non-repeating mock exams."
         audioGuideText={LOGIN_GUIDE_MESSAGE}
-        audioGuideLabel="Read login guide aloud"
-        stepBadge={voiceStep !== 'idle' ? 'Voice Guided' : undefined}
-        footerPromptText="Don't have an account?"
-        footerActionLabel="Create Account"
+        audioGuideLabel="Read Candidate Sign In Instructions"
+        stepBadge="Sign In Form"
+        footerPromptText="New candidate?"
+        footerActionLabel="Create an Accessible Account"
         onFooterAction={() => navigateTo('register')}
       >
-        {/* Voice Accessibility Controls */}
-        <VoiceGuidanceControls
-          mode="login"
-          isVoiceWorkflowActive={voiceStep !== 'idle'}
-          currentStepLabel={voiceStepLabels[voiceStep]}
-          isSpeaking={isSpeaking}
-          isListening={isVoiceListening || isCapturingCaptchaVoice}
-          onStartVoiceWorkflow={handleStartVoiceLogin}
-          onReadGuide={handleReadLoginGuide}
-          onStopSpeaking={stopSpeaking}
-          onSwitchToKeyboard={handleSwitchToKeyboard}
-        />
-
-        {/* Form-level Error or Success Alerts */}
-        <AuthenticationErrorMessage
-          id="login-form-error"
-          title="Sign-In Error"
-          message={formError}
-        />
-        <AuthenticationErrorMessage
-          id="login-form-success"
-          title="Signed In"
-          message={successMessage}
-          variant="success"
-        />
-
-        {/* Login Form */}
-        <form onSubmit={handleFormSubmit} noValidate className="space-y-5">
-          {/* 1. Registered Email Address */}
-          <AccessibleFormField
-            id="login-email"
-            name="identifier"
-            label="Registered Email Address"
-            type="email"
-            value={identifier}
-            onChange={(val) => {
-              setIdentifier(val);
-              identifierRef.current = val;
-              if (identifierError) setIdentifierError(null);
-              if (formError) setFormError(null);
-            }}
-            onBlur={() => {
-              if (identifier.trim()) {
-                const check = validateLoginIdentifier(identifier);
-                setIdentifierError(check.valid ? null : check.error || null);
-              }
-            }}
-            placeholder="student@example.com or SSC-2026-MTS-01"
-            hint="Enter your registered email address or official SSC Roll Number."
-            error={identifierError}
-            required
-            autoComplete="username"
-            enterKeyHint="next"
-            icon={<Mail className="w-4 h-4" />}
-            inputRef={emailInputRef}
-          />
-
-          {/* 2. Password (with Show/Hide control & Enter key support for Voice Login Step 5) */}
-          <AccessibleFormField
-            id="login-password"
-            name="password"
-            label="Password"
-            type="password"
-            value={password}
-            onChange={(val) => {
-              setPassword(val);
-              passwordRef.current = val;
-              if (passwordError) setPasswordError(null);
-              if (formError) setFormError(null);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && voiceStep === 'enter_password') {
-                e.preventDefault();
-                advanceFromPasswordToCaptcha();
-              }
-            }}
-            placeholder="Enter your password"
-            hint="Passwords are kept masked and are never spoken aloud."
-            error={passwordError}
-            required
-            autoComplete="current-password"
-            enterKeyHint="next"
-            icon={<Key className="w-4 h-4" />}
-            inputRef={passwordInputRef}
-          />
-
-          {/* 3. Audio CAPTCHA */}
-          <AudioCaptchaControls
-            id="login-captcha-input"
-            challenge={challenge}
-            loadingChallenge={challengeLoading}
-            captchaInput={captchaInput}
-            onCaptchaInputChange={(val) => {
-              setCaptchaInput(val);
-              captchaInputRefVal.current = val;
-              if (captchaError) setCaptchaError(null);
-            }}
-            onPlayAudio={handlePlayCaptchaAudio}
-            onRefreshChallenge={() => fetchNewChallenge(true, voiceStep === 'verify_captcha')}
-            onStartVoiceCapture={handleStartCaptchaVoiceCapture}
-            isCapturingVoice={isCapturingCaptchaVoice || voiceStep === 'verify_captcha'}
-            isVerified={
-              Boolean(verificationToken) &&
-              Boolean(challenge) &&
-              verifiedForInput === `${challenge?.challengeId}:${extractDigits(captchaInput)}`
+        <div className="space-y-6">
+          {/* Voice Guidance & Mode Control Banner */}
+          <VoiceGuidanceControls
+            mode="login"
+            isVoiceWorkflowActive={voiceStep !== 'idle'}
+            currentStepLabel={
+              voiceStep === 'ask_email'
+                ? 'Step 1: Listening for Email or Roll Number'
+                : voiceStep === 'ambiguous_email'
+                ? 'Step 1: Clarifying Email Spelling'
+                : voiceStep === 'confirm_email'
+                ? 'Step 1: Confirming Email'
+                : voiceStep === 'enter_password'
+                ? 'Step 2: Enter Password via Keyboard'
+                : voiceStep === 'ask_captcha'
+                ? 'Step 3: Repeating Audio CAPTCHA'
+                : voiceStep === 'confirm_captcha'
+                ? 'Step 3: Confirming Audio CAPTCHA'
+                : voiceStep === 'confirm_submit'
+                ? 'Step 4: Ready to Submit'
+                : undefined
             }
-            error={captchaError}
-            inputRef={captchaInputRef}
+            isSpeaking={isSpeaking}
+            isListening={isVoiceListening}
+            onStartVoiceWorkflow={handleStartVoiceLogin}
+            onReadGuide={handleReadLoginGuide}
+            onStopSpeaking={stopSpeaking}
+            onSwitchToKeyboard={handleSwitchToKeyboard}
           />
 
-          {/* 4. Sign In Button */}
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full min-h-[52px] py-3.5 px-6 text-base font-extrabold text-white bg-gradient-to-r from-[#1749E8] to-[#6241C8] hover:from-[#123BB8] hover:to-[#4C2FA8] rounded-xl shadow-md inline-flex items-center justify-center gap-2.5 transition-colors disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-[#6241C8]"
+          {/* Form-level Error or Success Alerts */}
+          {formError && (
+            <AuthenticationErrorMessage
+              id="login-form-error"
+              title="Sign In Notice"
+              message={formError}
+            />
+          )}
+
+          {successMessage && (
+            <div
+              role="status"
+              className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-700 text-emerald-900 dark:text-emerald-200 text-sm font-semibold flex items-center gap-2.5"
+            >
+              <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0" aria-hidden="true" />
+              <span>{successMessage}</span>
+            </div>
+          )}
+
+          {/* Blind-Friendly Single-Key Shortcuts Banner */}
+          <section
+            aria-label="Single-Key Accessibility Shortcuts"
+            className="p-3.5 rounded-2xl bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-slate-800 dark:to-slate-800 border-2 border-[#1749E8] text-xs text-[#172033] dark:text-blue-100 space-y-2 shadow-xs"
           >
-            {loading ? (
-              <>
-                <Loader2 className="w-5 h-5 animate-spin" aria-hidden="true" />
-                <span>Signing In...</span>
-              </>
-            ) : (
-              <>
-                <LogIn className="w-5 h-5" aria-hidden="true" />
-                <span>Sign In</span>
-              </>
-            )}
-          </button>
-        </form>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-2">
+                <Keyboard className="w-4 h-4 text-[#1749E8] dark:text-blue-400 shrink-0" aria-hidden="true" />
+                <span className="font-extrabold uppercase tracking-wider text-[11px] text-[#1749E8] dark:text-blue-300">
+                  Single-Key Shortcuts for Blind Candidates
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={handleReadKeyboardShortcuts}
+                className="text-xs font-bold text-[#1749E8] dark:text-blue-300 hover:underline inline-flex items-center gap-1 focus:outline-none focus:ring-2 focus:ring-[#1749E8] rounded px-1.5 py-0.5"
+                aria-label="Read all keyboard shortcuts aloud"
+              >
+                <span>Hear Shortcuts (Press K)</span>
+              </button>
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-semibold text-[#53627A] dark:text-slate-300">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700">
+                <kbd className="font-bold text-[#1749E8]">L</kbd> Email
+              </span>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700">
+                <kbd className="font-bold text-[#1749E8]">P</kbd> Password
+              </span>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white dark:bg-slate-900 border border-emerald-500 text-emerald-800 dark:text-emerald-300">
+                <kbd className="font-bold text-emerald-600">C</kbd> Auto-Write CAPTCHA
+              </span>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700">
+                <kbd className="font-bold text-[#1749E8]">S</kbd> Submit
+              </span>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700">
+                <kbd className="font-bold text-[#1749E8]">R</kbd> Play Audio
+              </span>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950 border border-blue-400 text-[#1749E8] dark:text-blue-300">
+                <kbd className="font-bold text-[#1749E8]">F2</kbd> Re-Read
+              </span>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950 border border-emerald-400 text-emerald-800 dark:text-emerald-300">
+                <kbd className="font-bold text-emerald-700">Y</kbd> Confirm
+              </span>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-50 dark:bg-red-950 border border-red-400 text-red-800 dark:text-red-300">
+                <kbd className="font-bold text-red-700">N</kbd> Clear
+              </span>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700">
+                <kbd className="font-bold text-[#1749E8]">K</kbd> Read All
+              </span>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700">
+                <kbd className="font-bold text-[#1749E8]">Esc</kbd> Stop Voice
+              </span>
+            </div>
+          </section>
+
+          {/* Main Accessible Form */}
+          <form onSubmit={handleFormSubmit} className="space-y-5" noValidate>
+            {/* Field 1: Registered Email Address or SSC Roll Number */}
+            <AccessibleFormField
+              id="candidate-identifier"
+              name="identifier"
+              label="Registered Email Address or Roll Number"
+              type="text"
+              value={identifier}
+              onChange={(val) => {
+                setIdentifier(val);
+                identifierRef.current = val;
+                if (identifierError) setIdentifierError(null);
+              }}
+              onFocus={handleEmailFocus}
+              onBlur={handleEmailBlur}
+              required
+              autoComplete="username"
+              placeholder="e.g. ashwin@gmail.com or SSC-2026-MTS-01"
+              error={identifierError}
+              hint="Press L to focus. After typing, press Tab — I will read it back and ask you to confirm."
+              inputRef={emailInputRef}
+              icon={<Mail className="w-4 h-4 text-[#53627A] dark:text-slate-400" aria-hidden="true" />}
+            />
+
+            {/* Field 2: Secure Password Entry with Show/Hide Toggle */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label
+                  htmlFor="candidate-password"
+                  className="block text-sm font-bold text-[#172033] dark:text-slate-100"
+                >
+                  Password{' '}
+                  <span className="text-red-600 dark:text-red-400 font-extrabold" aria-hidden="true">
+                    *
+                  </span>
+                </label>
+
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  aria-label={showPassword ? 'Hide password' : 'Show password as plain text'}
+                  className="text-xs font-semibold text-[#1749E8] dark:text-blue-400 hover:underline inline-flex items-center gap-1 focus:outline-none focus:ring-2 focus:ring-[#1749E8] rounded px-1.5 py-0.5"
+                >
+                  {showPassword ? (
+                    <>
+                      <EyeOff className="w-3.5 h-3.5" aria-hidden="true" />
+                      <span>Hide</span>
+                    </>
+                  ) : (
+                    <>
+                      <Eye className="w-3.5 h-3.5" aria-hidden="true" />
+                      <span>Show</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              <div className="relative">
+                <input
+                  id="candidate-password"
+                  ref={passwordInputRef}
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    passwordRef.current = e.target.value;
+                    if (passwordError) setPasswordError(null);
+                  }}
+                  onFocus={handlePasswordFocus}
+                  onBlur={handlePasswordBlur}
+                  required
+                  autoComplete="current-password"
+                  aria-invalid={!!passwordError}
+                  aria-describedby={passwordError ? 'candidate-password-error' : 'candidate-password-hint'}
+                  placeholder="Enter your confidential password"
+                  className={`w-full px-4 py-3 rounded-xl text-sm font-medium border-2 transition-all bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-4 ${
+                    passwordError
+                      ? 'border-red-500 focus:ring-red-200'
+                      : 'border-slate-300 dark:border-slate-700 focus:border-[#1749E8] focus:ring-blue-200'
+                  }`}
+                />
+              </div>
+
+              {passwordError ? (
+                <p id="candidate-password-error" role="alert" className="text-xs font-bold text-red-600 dark:text-red-400 mt-1">
+                  {passwordError}
+                </p>
+              ) : (
+                <p id="candidate-password-hint" className="text-xs text-[#53627A] dark:text-slate-400 mt-1">
+                  Private password entry. Press P to focus. Never spoken aloud.
+                </p>
+              )}
+            </div>
+
+            {/* Field 3: Accessible 4-Digit Audio CAPTCHA */}
+            <AudioCaptchaControls
+              id="audio-captcha-input"
+              challenge={challenge}
+              loadingChallenge={challengeLoading}
+              captchaInput={captchaInput}
+              onCaptchaInputChange={(val) => {
+                setCaptchaInput(val);
+                captchaInputRefVal.current = val;
+                if (captchaError) setCaptchaError(null);
+              }}
+              onPlayAudio={handlePlayCaptchaAudio}
+              onRefreshChallenge={() => fetchNewChallenge(true, false)}
+              isVerified={!!verificationToken}
+              error={captchaError}
+              inputRef={captchaInputRef}
+              onInputFocus={handleCaptchaFocus}
+              onInputBlur={handleCaptchaBlur}
+            />
+
+            {/* Submit & Action Buttons */}
+            <div className="pt-2 space-y-3">
+
+              {/* Pre-Submit Confirmation Banner (shown when S is pressed) */}
+              {awaitingSubmitConfirmation && (
+                <div
+                  role="alert"
+                  aria-live="assertive"
+                  className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/40 border-2 border-amber-400 dark:border-amber-600 space-y-2"
+                >
+                  <p className="text-sm font-extrabold text-amber-900 dark:text-amber-200 flex items-center gap-2">
+                    <span aria-hidden="true">⚠️</span>
+                    Confirm Before Signing In
+                  </p>
+                  <p className="text-xs text-amber-800 dark:text-amber-300">
+                    <strong>Email:</strong>{' '}
+                    <span className="font-mono tracking-wider">{identifier}</span>
+                  </p>
+                  <p className="text-xs text-amber-800 dark:text-amber-300">
+                    <strong>Password:</strong> <em>entered (hidden for security)</em>
+                  </p>
+                  <p className="text-xs text-amber-800 dark:text-amber-300">
+                    <strong>Verification Code:</strong>{' '}
+                    <span className="font-mono tracking-wider">{captchaInput}</span>
+                  </p>
+                  <div className="flex gap-3 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAwaitingSubmitConfirmation(false);
+                        awaitingSubmitRef.current = false;
+                        executeSignIn();
+                      }}
+                      className="flex-1 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                      aria-label="Confirm and sign in"
+                    >
+                      ✓ Yes, Sign In <kbd className="ml-1 text-xs opacity-80 font-mono">[Y]</kbd>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAwaitingSubmitConfirmation(false);
+                        awaitingSubmitRef.current = false;
+                        const msg = 'Cancelled. Review your details and press S again when ready.';
+                        announce(msg, 'polite'); speakText(msg);
+                      }}
+                      className="flex-1 py-2 rounded-lg bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 text-slate-800 dark:text-white text-sm font-bold focus:outline-none focus:ring-2 focus:ring-slate-400"
+                      aria-label="Cancel and go back"
+                    >
+                      ✗ No, Go Back <kbd className="ml-1 text-xs opacity-80 font-mono">[N]</kbd>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full min-h-[50px] px-6 py-3.5 rounded-xl font-bold text-sm text-white bg-[#1749E8] hover:bg-blue-700 active:bg-blue-800 focus:outline-none focus:ring-4 focus:ring-blue-300 transition-all shadow-md inline-flex items-center justify-center gap-2 disabled:opacity-60"
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" aria-hidden="true" />
+                    <span>Signing in securely...</span>
+                  </>
+                ) : (
+                  <>
+                    <LogIn className="w-5 h-5" aria-hidden="true" />
+                    <span>Sign In to Candidate Dashboard</span>
+                  </>
+                )}
+              </button>
+
+              {/* Developer / Demo Quick Testing Button */}
+              <div className="text-center pt-1">
+                <button
+                  type="button"
+                  onClick={handleFillDemoCredentials}
+                  className="text-xs font-semibold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 underline focus:outline-none focus:ring-2 focus:ring-[#1749E8] rounded px-2 py-1"
+                >
+                  Fill Demo Credentials (Aarav Sharma - Visually Impaired Candidate)
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
       </AuthenticationCard>
     </AuthenticationLayout>
   );

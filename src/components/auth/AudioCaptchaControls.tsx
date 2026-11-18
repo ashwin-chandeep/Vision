@@ -21,6 +21,8 @@ interface AudioCaptchaControlsProps {
   isVerified?: boolean;
   error?: string | null;
   inputRef?: React.RefObject<HTMLInputElement | null>;
+  onInputFocus?: () => void;
+  onInputBlur?: () => void;
 }
 
 export function AudioCaptchaControls({
@@ -35,7 +37,9 @@ export function AudioCaptchaControls({
   isCapturingVoice = false,
   isVerified = false,
   error,
-  inputRef
+  inputRef,
+  onInputFocus,
+  onInputBlur,
 }: AudioCaptchaControlsProps) {
   const explanationId = `${id}-explanation`;
   const errorId = error ? `${id}-error` : undefined;
@@ -76,7 +80,7 @@ export function AudioCaptchaControls({
 
       {/* Accessible explanation of what the CAPTCHA does */}
       <p id={explanationId} className="text-xs text-[#53627A] dark:text-slate-300 leading-relaxed">
-        Audio CAPTCHA verifies human access. Press <strong>Play Audio CAPTCHA</strong> (or <kbd className="px-1 py-0.5 bg-white dark:bg-slate-900 border border-[#D9E1EF] rounded font-mono text-[11px]">Alt+R</kbd>) to hear the four digits spoken individually with short pauses, then type or speak the digits below.
+        Audio CAPTCHA verifies human access. Blind candidates can press <kbd className="px-1.5 py-0.5 bg-white dark:bg-slate-900 border border-[#1749E8] rounded font-bold font-mono text-[11px] text-[#1749E8]">C</kbd> to auto-write the verification code, press <kbd className="px-1.5 py-0.5 bg-white dark:bg-slate-900 border border-[#D9E1EF] rounded font-mono text-[11px]">R</kbd> to play digits aloud, or type the digits below. Press <kbd className="px-1.5 py-0.5 bg-white dark:bg-slate-900 border border-[#D9E1EF] rounded font-mono text-[11px]">K</kbd> to hear all shortcuts.
       </p>
 
       {/* Visual + Audio Code Display & Playback Controls */}
@@ -139,9 +143,12 @@ export function AudioCaptchaControls({
             type="text"
             inputMode="numeric"
             autoComplete="off"
+            data-challenge-phrase={challenge ? challenge.phrase : ''}
             required
             value={captchaInput}
             onChange={(e) => onCaptchaInputChange(e.target.value)}
+            onFocus={onInputFocus}
+            onBlur={onInputBlur}
             placeholder="Enter the 4 digits (e.g. 5832)"
             aria-invalid={error ? 'true' : undefined}
             aria-errormessage={errorId}

@@ -130,6 +130,113 @@ export function AuthenticationLayout({
         {/* Right Section: Authentication Form Card (6 columns on desktop) */}
         <div className="lg:col-span-6">{children}</div>
       </div>
+
+      {/* Accessible Keyboard Shortcuts Section (Visible at bottom of page, NO popups) */}
+      <section
+        aria-label="Accessible Keyboard Shortcuts Reference"
+        className="mt-8 p-5 sm:p-6 rounded-3xl bg-white dark:bg-slate-900 border-2 border-[#D9E1EF] dark:border-slate-700 shadow-xs space-y-3.5"
+      >
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-[#D9E1EF] dark:border-slate-800">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-[#EEF4FF] dark:bg-blue-950 text-[#1749E8] dark:text-blue-300 flex items-center justify-center font-bold text-xs" aria-hidden="true">
+              ⌨️
+            </div>
+            <div>
+              <h2 className="text-sm font-extrabold text-[#172033] dark:text-white">
+                Accessible Keyboard Shortcuts Guide
+              </h2>
+              <p className="text-xs text-[#53627A] dark:text-slate-400">
+                Single-key shortcuts for blind and visually impaired candidates. Press <kbd className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-mono font-bold text-[#1749E8]">K</kbd> anytime to hear this list read aloud (no popups).
+              </p>
+            </div>
+          </div>
+          <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-2.5 py-1 rounded-full border border-emerald-300 dark:border-emerald-700 self-start sm:self-auto">
+            ● Always Active (Zero Mouse Required)
+          </span>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-5 lg:grid-cols-10 gap-2 text-xs">
+          <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex flex-col items-center text-center gap-1">
+            <kbd className="w-8 h-8 rounded-lg bg-[#1749E8] text-white font-extrabold text-sm flex items-center justify-center shadow-xs">
+              L
+            </kbd>
+            <span className="font-bold text-[#172033] dark:text-white">Email</span>
+            <span className="text-[10px] text-slate-500 dark:text-slate-400">Focuses field</span>
+          </div>
+
+          <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex flex-col items-center text-center gap-1">
+            <kbd className="w-8 h-8 rounded-lg bg-[#1749E8] text-white font-extrabold text-sm flex items-center justify-center shadow-xs">
+              P
+            </kbd>
+            <span className="font-bold text-[#172033] dark:text-white">Password</span>
+            <span className="text-[10px] text-slate-500 dark:text-slate-400">Focuses field</span>
+          </div>
+
+          <div className="p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-700 flex flex-col items-center text-center gap-1">
+            <kbd className="w-8 h-8 rounded-lg bg-emerald-600 text-white font-extrabold text-sm flex items-center justify-center shadow-xs">
+              C
+            </kbd>
+            <span className="font-bold text-emerald-800 dark:text-emerald-300">Auto CAPTCHA</span>
+            <span className="text-[10px] text-emerald-600 dark:text-emerald-400">Auto-writes code</span>
+          </div>
+
+          <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex flex-col items-center text-center gap-1">
+            <kbd className="w-8 h-8 rounded-lg bg-[#1749E8] text-white font-extrabold text-sm flex items-center justify-center shadow-xs">
+              S
+            </kbd>
+            <span className="font-bold text-[#172033] dark:text-white">Submit</span>
+            <span className="text-[10px] text-slate-500 dark:text-slate-400">Review &amp; sign in</span>
+          </div>
+
+          <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex flex-col items-center text-center gap-1">
+            <kbd className="w-8 h-8 rounded-lg bg-[#1749E8] text-white font-extrabold text-sm flex items-center justify-center shadow-xs">
+              R
+            </kbd>
+            <span className="font-bold text-[#172033] dark:text-white">Play Audio</span>
+            <span className="text-[10px] text-slate-500 dark:text-slate-400">Hear CAPTCHA</span>
+          </div>
+
+          <div className="p-2 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-300 dark:border-blue-700 flex flex-col items-center text-center gap-1">
+            <kbd className="w-8 h-8 rounded-lg bg-[#1749E8] text-white font-extrabold text-xs flex items-center justify-center shadow-xs">
+              F2
+            </kbd>
+            <span className="font-bold text-[#1749E8] dark:text-blue-300">Re-Read</span>
+            <span className="text-[10px] text-slate-500 dark:text-slate-400">Reads active field</span>
+          </div>
+
+          <div className="p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-700 flex flex-col items-center text-center gap-1">
+            <kbd className="w-8 h-8 rounded-lg bg-emerald-700 text-white font-extrabold text-sm flex items-center justify-center shadow-xs">
+              Y
+            </kbd>
+            <span className="font-bold text-emerald-800 dark:text-emerald-300">Confirm</span>
+            <span className="text-[10px] text-emerald-600 dark:text-emerald-400">Confirms input</span>
+          </div>
+
+          <div className="p-2 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-300 dark:border-red-700 flex flex-col items-center text-center gap-1">
+            <kbd className="w-8 h-8 rounded-lg bg-red-600 text-white font-extrabold text-sm flex items-center justify-center shadow-xs">
+              N
+            </kbd>
+            <span className="font-bold text-red-800 dark:text-red-300">Clear</span>
+            <span className="text-[10px] text-red-600 dark:text-red-400">Clears &amp; retries</span>
+          </div>
+
+          <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex flex-col items-center text-center gap-1">
+            <kbd className="w-8 h-8 rounded-lg bg-[#1749E8] text-white font-extrabold text-sm flex items-center justify-center shadow-xs">
+              K
+            </kbd>
+            <span className="font-bold text-[#172033] dark:text-white">Read All</span>
+            <span className="text-[10px] text-slate-500 dark:text-slate-400">Speaks shortcuts</span>
+          </div>
+
+          <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex flex-col items-center text-center gap-1">
+            <kbd className="w-8 h-8 rounded-lg bg-slate-600 text-white font-extrabold text-xs flex items-center justify-center shadow-xs">
+              Esc
+            </kbd>
+            <span className="font-bold text-[#172033] dark:text-white">Stop</span>
+            <span className="text-[10px] text-slate-500 dark:text-slate-400">Halts voice</span>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }

@@ -27,9 +27,13 @@ import { audioBeacon } from '../utils/audioBeacon.ts';
 import { NavigationController } from '../voice/NavigationController.ts';
 import { NavigationContext } from '../voice/commandTypes.ts';
 import { VoiceEngine } from '../voice/VoiceEngine.ts';
+import { AccessibilityModeSelectorModal } from '../components/accessibility/AccessibilityModeSelectorModal.tsx';
+import { resolveNavigationShortcut } from '../services/shortcutRegistry.ts';
+import { getPageHelp } from '../data/pageHelpRegistry.ts';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
+export type AccessibilityInteractionMode = 'unselected' | 'voice' | 'keyboard' | 'manual';
 export type ThemeMode = 'default' | 'sapphire' | 'high-contrast-yellow' | 'monochrome' | 'soft-dark';
 export type FontSize = 'normal' | 'large' | 'xlarge' | 'xxlarge';
 
@@ -85,6 +89,14 @@ export interface AccessibilityContextType {
   deactivateVisionAssistant: () => void;
   showKeyboardShortcutsModal: boolean;
   setShowKeyboardShortcutsModal: (show: boolean) => void;
+
+  // Interaction Mode
+  interactionMode: AccessibilityInteractionMode;
+  setInteractionMode: (mode: AccessibilityInteractionMode, remember?: boolean) => void;
+  selectInteractionMode: (mode: AccessibilityInteractionMode, remember?: boolean) => void;
+  showModeSelectorModal: boolean;
+  setShowModeSelectorModal: (show: boolean) => void;
+  resetInteractionMode: () => void;
 
   // Voice Engine State
   isVoiceListening: boolean;
@@ -184,6 +196,24 @@ function getSavedSessionUser(): User | null {
   return null;
 }
 
+function getInitialInteractionMode(): AccessibilityInteractionMode {
+  try {
+    if (typeof window === 'undefined') return 'voice';
+    const remembered = localStorage.getItem('accessprep_remember_mode') === 'true';
+    if (remembered) {
+      const preferred = localStorage.getItem('accessprep_preferred_mode') as AccessibilityInteractionMode;
+      if (preferred === 'voice' || preferred === 'keyboard' || preferred === 'manual') {
+        return preferred;
+      }
+    }
+    const sessionMode = sessionStorage.getItem('accessprep_session_mode') as AccessibilityInteractionMode;
+    if (sessionMode === 'voice' || sessionMode === 'keyboard' || sessionMode === 'manual') {
+      return sessionMode;
+    }
+  } catch {}
+  return 'voice'; // Default directly to Voice Assistance (Vision Mode) so blind candidates are never blocked
+}
+
 function resolveScreenFromLocation(): ScreenId | null {
   try {
     if (typeof window === 'undefined') return null;
@@ -237,7 +267,9 @@ export function AccessibilityProvider({ children }: { children: ReactNode }) {
   });
 
   const [isVisionAssistantActive, setIsVisionAssistantActive] = useState(false);
-  const [showKeyboardShortcutsModal, setShowKeyboardShortcutsModal] = useState(false);
+  const [showKeyboardShortcutsModal, setShowKeyboardShortcutsModalState] = useState(false);
+  const [interactionMode, setInteractionModeState] = useState<AccessibilityInteractionMode>(getInitialInteractionMode);
+  const [showModeSelectorModal, setShowModeSelectorModal] = useState<boolean>(false);
   const [isVoiceListening, setIsVoiceListening] = useState(false);
   const [micPermissionStatus, setMicPermissionStatus] = useState<'unknown' | 'granted' | 'denied' | 'unsupported'>('unknown');
   const [isExamActive, setIsExamActiveState] = useState(false);
@@ -254,6 +286,8 @@ export function AccessibilityProvider({ children }: { children: ReactNode }) {
   userRef.current = user;
   const settingsRef = useRef<AccessibilitySettings>(settings);
   settingsRef.current = settings;
+  const interactionModeRef = useRef<AccessibilityInteractionMode>(interactionMode);
+  interactionModeRef.current = interactionMode;
   const isSpeakingRef = useRef(false);
   const isExamActiveRef = useRef(false);
   const historyStackRef = useRef<ScreenId[]>([]);
@@ -319,6 +353,12 @@ export function AccessibilityProvider({ children }: { children: ReactNode }) {
 
   const speakText = useCallback((text: string, onEnd?: () => void) => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window) || !text) {
+      if (onEnd) onEnd();
+      return;
+    }
+
+    // Independent Manual Mode: do not auto-synthesize speech
+    if (interactionModeRef.current === 'manual') {
       if (onEnd) onEnd();
       return;
     }
@@ -403,6 +443,36 @@ export function AccessibilityProvider({ children }: { children: ReactNode }) {
     window.speechSynthesis.speak(utterance);
   }, []);
 
+  // Context-Aware Inline Keyboard Shortcuts handler (Never opens a modal dialog / popup)
+  const openInlineKeyboardShortcuts = useCallback(() => {
+    window.dispatchEvent(new CustomEvent('accessprep:show-inline-keyboard-help'));
+    const bannerEl =
+      document.getElementById('page-help-banner-heading') ||
+      document.querySelector('[aria-labelledby="page-help-banner-heading"]');
+    if (bannerEl) {
+      bannerEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    const isAuth = currentScreenRef.current === 'login' || currentScreenRef.current === 'register';
+    if (isAuth) {
+      const authHelp =
+        'ACCESSPREP-X Keyboard Shortcuts: Press L to type your email address or roll number. Press P to enter your password. Press C to auto-fill the audio verification code. Press S to sign in. Press R to play audio verification code. Press F 2 to re-read the current field. Press Y to confirm. Press N to clear or cancel. Press H for help. Press K to hear this description again. Press Escape to stop speech. The microphone is always listening for your voice commands.';
+      announce(authHelp, 'assertive');
+      speakText(authHelp);
+    } else {
+      const rec = getPageHelp(currentScreenRef.current);
+      const textToSpeak = `${rec.spokenKeyboardHelp} Press R to replay, press V for voice commands, or press S to continue.`;
+      announce(`Reading keyboard shortcuts for ${rec.title}`, 'polite');
+      speakText(textToSpeak);
+    }
+  }, [announce, speakText]);
+
+  const setShowKeyboardShortcutsModal = useCallback((show: boolean) => {
+    if (show) {
+      openInlineKeyboardShortcuts();
+    }
+    setShowKeyboardShortcutsModalState(false);
+  }, [openInlineKeyboardShortcuts]);
+
   // 3. Navigation handler
   const navigateTo = useCallback((screen: ScreenId | string) => {
     const matched = normalizeToApprovedScreen(screen as string);
@@ -419,8 +489,8 @@ export function AccessibilityProvider({ children }: { children: ReactNode }) {
       const destTitle = SCREEN_REGISTRY[matched]?.title || matched;
       const pending = { destination: matched, title: destTitle };
       setPendingExamExit(pending);
-      announce('An examination is in progress. Do you want to pause and leave? Say Yes or No.', 'assertive');
-      speakText('An examination is in progress. Do you want to pause and leave? Say Yes or No.');
+      announce('You are currently taking an examination. Do you want to submit your answers and exit?', 'assertive');
+      speakText('You are currently taking an examination. Do you want to submit your answers and exit?');
       return;
     }
 
@@ -571,7 +641,7 @@ export function AccessibilityProvider({ children }: { children: ReactNode }) {
       `Say "Dashboard" or "Read dashboard" to return to the home screen. ` +
       `Say "Subjects" to explore the SSC MTS syllabus. ` +
       `Say "Screen reader settings" to adjust speech speed or pitch. ` +
-      `Keyboard shortcuts: Alt+D for Dashboard, Alt+P for Practice, Alt+M for Mock Exam, Alt+T for AI Tutor, Alt+R for Revision Planner, and Alt+Arrow keys to move between screens. ` +
+      `Keyboard shortcuts: Alt+D for Dashboard, Alt+P for Practice, Alt+E for Mock Exam, Alt+T for AI Tutor, Alt+R for Revision Planner, and Alt+Arrow keys to move between screens. ` +
       `On any page, say "Stop" to stop reading and start listening. ` +
       `What would you like to do?`;
 
@@ -605,6 +675,63 @@ export function AccessibilityProvider({ children }: { children: ReactNode }) {
     getEngine().stop();
     setIsVoiceListening(false);
   }, [getEngine]);
+
+  // Accessibility Interaction Mode selection & management
+  const selectInteractionMode = useCallback((mode: AccessibilityInteractionMode, remember: boolean = true) => {
+    setInteractionModeState(mode);
+    interactionModeRef.current = mode;
+    try {
+      sessionStorage.setItem('accessprep_session_mode', mode);
+      if (remember) {
+        localStorage.setItem('accessprep_remember_mode', 'true');
+        localStorage.setItem('accessprep_preferred_mode', mode);
+      }
+    } catch {}
+
+    if (mode === 'voice') {
+      setIsBlindModeState(true);
+      try { localStorage.setItem('accessprep_blind_mode', 'true'); } catch {}
+      setIsVisionAssistantActive(true);
+      if (navControllerRef.current) {
+        navControllerRef.current.updateContext({ isVisionAssistantActive: true });
+      }
+      audioBeacon.playSuccessBeacon();
+      announce('Voice Assistance Mode activated. Vision Assistant is ready.', 'assertive');
+      speakText('Voice Assistance Mode activated. You can speak commands or say Help at any time.');
+    } else if (mode === 'keyboard') {
+      setIsBlindModeState(false);
+      try { localStorage.setItem('accessprep_blind_mode', 'false'); } catch {}
+      setIsVisionAssistantActive(false);
+      if (navControllerRef.current) {
+        navControllerRef.current.updateContext({ isVisionAssistantActive: false });
+      }
+      stopSpeaking();
+      stopVoiceListening();
+      announce('Keyboard Shortcut Mode activated. Press K for keyboard help, or Alt+V to switch to voice mode.', 'polite');
+    } else if (mode === 'manual') {
+      setIsBlindModeState(false);
+      try { localStorage.setItem('accessprep_blind_mode', 'false'); } catch {}
+      setIsVisionAssistantActive(false);
+      if (navControllerRef.current) {
+        navControllerRef.current.updateContext({ isVisionAssistantActive: false });
+      }
+      stopSpeaking();
+      stopVoiceListening();
+      announce('Independent Manual Mode activated. Automatic speech synthesis and microphone are disabled.', 'polite');
+    }
+  }, [stopSpeaking, stopVoiceListening, announce, speakText]);
+
+  const resetInteractionMode = useCallback(() => {
+    try {
+      localStorage.removeItem('accessprep_remember_mode');
+      localStorage.removeItem('accessprep_preferred_mode');
+      sessionStorage.removeItem('accessprep_session_mode');
+    } catch {}
+    setInteractionModeState('unselected');
+    interactionModeRef.current = 'unselected';
+    setShowModeSelectorModal(true);
+    announce('Interaction mode reset. Please select how you would like to use ACCESSPREP-X.', 'polite');
+  }, [announce]);
 
   const registerVoiceHandler = useCallback((handler: (transcript: string, meta?: { confidence?: number }) => boolean | Promise<boolean>) => {
     activeVoiceHandlerRef.current = handler;
@@ -708,6 +835,9 @@ export function AccessibilityProvider({ children }: { children: ReactNode }) {
           if (navControllerRef.current) {
             navControllerRef.current.updateContext({ isVisionAssistantActive: active });
           }
+        },
+        onSwitchMode: (mode: 'voice' | 'keyboard' | 'manual') => {
+          selectInteractionMode(mode, false);
         }
       });
     } else {
@@ -788,22 +918,143 @@ export function AccessibilityProvider({ children }: { children: ReactNode }) {
     if (settings.reduceMotion) document.body.classList.add('reduce-motion');
   }, [settings]);
 
-  // 17. Global keyboard shortcuts
+  // 17. Centralized keyboard shortcut registry & Blind-Friendly Single-Key Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return;
+      const isTyping = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
 
-      // Escape: stop ongoing speech immediately and start listening
+      // Escape: Stop ongoing speech immediately (and unfocus input if typing)
       if (e.key === 'Escape') {
+        if (isTyping) {
+          target.blur();
+        }
         stopSpeaking();
-        audioBeacon.playListeningBeacon();
-        announce('Speech stopped. Vision Assistant is listening.', 'polite');
+        if (interactionModeRef.current === 'voice') {
+          audioBeacon.playListeningBeacon();
+          announce('Speech stopped. Vision Assistant is listening.', 'polite');
+        } else {
+          announce('Speech stopped.', 'polite');
+        }
         return;
       }
 
+      // If user is actively typing in a form input, preserve standard character typing
+      if (isTyping) {
+        return;
+      }
+
+      const key = e.key.toLowerCase();
+      const isAuthScreen = currentScreenRef.current === 'login' || currentScreenRef.current === 'register';
+
+      // 1. Single-Key 'K': Context-Aware Keyboard Shortcuts Announcement & Inline Guide Display (NO POPUPS)
+      if ((key === 'k' && !e.ctrlKey && !e.metaKey && !e.altKey) || (e.altKey && key === 'k' && isAuthScreen)) {
+        e.preventDefault();
+        openInlineKeyboardShortcuts();
+        return;
+      }
+
+      // 2. Auth Screen Single-Key Shortcuts (L, P, C, S, R, H)
+      if (isAuthScreen && !e.ctrlKey && !e.metaKey) {
+        // [L]: Focus Email / Roll Number field
+        if (key === 'l' || (e.altKey && key === 'e') || (e.altKey && key === 'l')) {
+          e.preventDefault();
+          const el = (document.getElementById('candidate-identifier') ||
+            document.getElementById('register-email') ||
+            document.querySelector('input[name="identifier"]') ||
+            document.querySelector('input[name="email"]') ||
+            document.querySelector('input[type="email"]')) as HTMLInputElement | null;
+          if (el) {
+            el.focus();
+            const msg = 'Email field focused. You can now type your registered email address or roll number.';
+            announce(msg, 'assertive');
+            speakText(msg);
+          }
+          return;
+        }
+
+        // [P]: Focus Password field
+        if (key === 'p' || (e.altKey && key === 'p')) {
+          e.preventDefault();
+          const el = (document.getElementById('candidate-password') ||
+            document.getElementById('register-password') ||
+            document.querySelector('input[name="password"]') ||
+            document.querySelector('input[type="password"]')) as HTMLInputElement | null;
+          if (el) {
+            el.focus();
+            const msg = 'Password field focused. Please enter your confidential password using your keyboard.';
+            announce(msg, 'assertive');
+            speakText(msg);
+          }
+          return;
+        }
+
+        // [C]: Auto-Write Audio CAPTCHA (Single key for blind candidates)
+        if (key === 'c' || (e.altKey && key === 'c')) {
+          e.preventDefault();
+          window.dispatchEvent(new CustomEvent('accessprep:auto-fill-captcha'));
+          return;
+        }
+
+        // [S]: Sign In / Submit Form
+        if (key === 's' || (e.altKey && key === 's')) {
+          e.preventDefault();
+          const submitBtn = (document.querySelector('button[type="submit"]') ||
+            document.querySelector('button[aria-label*="Sign In"]') ||
+            document.querySelector('button[aria-label*="Create"]')) as HTMLButtonElement | null;
+          if (submitBtn) {
+            const msg = currentScreenRef.current === 'login' ? 'Signing in...' : 'Creating account...';
+            announce(msg, 'assertive');
+            speakText(msg);
+            submitBtn.click();
+          }
+          return;
+        }
+
+        // [R]: Play / Repeat Audio CAPTCHA
+        if (key === 'r' || (e.altKey && key === 'r')) {
+          e.preventDefault();
+          const btn = document.querySelector('button[aria-label*="Play Audio CAPTCHA"]') as HTMLButtonElement | null;
+          if (btn) {
+            btn.click();
+          }
+          return;
+        }
+
+        // [H]: Page Help / Instructions
+        if (key === 'h' || (e.altKey && key === 'h')) {
+          e.preventDefault();
+          const helpText = currentScreenRef.current === 'login'
+            ? 'Candidate Login Help: Press L to type your email address or roll number. Press P to enter your password. Press C to auto-fill the audio verification code. Press S to sign in. Press R to play audio verification code. Press K to hear all keyboard shortcuts.'
+            : 'Candidate Registration Help: Press L to type your email address. Press P to enter your password. Press C to auto-fill the audio verification code. Press S to create account. Press R to play audio verification code. Press K to hear all keyboard shortcuts.';
+          announce(helpText, 'assertive');
+          speakText(helpText);
+          return;
+        }
+      }
+
+      // 3. Mode switching & modal shortcuts
       if (e.altKey && !e.ctrlKey && !e.metaKey) {
-        const key = e.key.toLowerCase();
+        // Alt+V: Switch to Voice Assistance (Vision Mode)
+        if (key === 'v') {
+          e.preventDefault();
+          selectInteractionMode('voice', false);
+          return;
+        }
+
+        // Alt+K: Switch to Keyboard Shortcut Mode (when not on auth page)
+        if (key === 'k') {
+          e.preventDefault();
+          selectInteractionMode('keyboard', false);
+          return;
+        }
+
+        // Alt+M: Switch to Independent Manual Mode
+        if (key === 'm') {
+          e.preventDefault();
+          selectInteractionMode('manual', false);
+          return;
+        }
 
         // Alt+Space: Toggle/Activate Vision Assistant
         if (e.code === 'Space' || e.key === ' ') {
@@ -812,68 +1063,85 @@ export function AccessibilityProvider({ children }: { children: ReactNode }) {
           return;
         }
 
-        // Alt+/: Shortcuts reference
+        // Alt+/: Shortcuts reference -> Route to inline guide (NO POPUPS)
         if (key === '/' || e.key === '?') {
           e.preventDefault();
-          setShowKeyboardShortcutsModal(true);
+          openInlineKeyboardShortcuts();
           return;
         }
 
-        // Alt+ArrowDown / Up: sequential navigation
-        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        // Alt+Shift+A: Open Accessibility Mode Selection Modal
+        if (e.shiftKey && key === 'a') {
           e.preventDefault();
-          const seq: ScreenId[] = [
-            'dashboard', 'topics', 'voice_practice', 'pilot_demo',
-            'mock_exam', 'results', 'ai_tutor', 'revision_planner',
-            'progress', 'accessibility_settings',
-            'screen_reader_settings', 'learning_history'
-          ];
-          const curr = seq.indexOf(currentScreenRef.current);
-          const idx = e.key === 'ArrowDown'
-            ? (curr >= 0 && curr < seq.length - 1 ? curr + 1 : 0)
-            : (curr > 0 ? curr - 1 : seq.length - 1);
-          navigateTo(seq[idx]);
+          setShowModeSelectorModal(true);
           return;
         }
 
-        const navMap: Record<string, ScreenId> = {
-          d: 'dashboard', t: 'ai_tutor', p: 'voice_practice',
-          m: 'mock_exam', e: 'mock_exam', o: 'pilot_demo',
-          r: 'revision_planner', a: 'progress',
-          s: 'topics', g: 'topics', h: 'learning_history',
-          c: 'accessibility_settings', w: 'screen_reader_settings',
-          u: 'results'
-        };
+        // If user is typing in a form input, avoid intercepting screen navigation
+        if (isTyping) return;
 
-        if (navMap[key]) {
-          e.preventDefault();
-          navigateTo(navMap[key]);
-          return;
-        }
-
-        if (key === 'l') {
-          e.preventDefault();
-          logout();
-          return;
-        }
-
-        if (key === 'v' || key === 'b') {
-          e.preventDefault();
-          const next = !isBlindMode;
-          setIsBlindMode(next);
-          if (next) {
-            activateVisionAssistant();
-          } else {
-            deactivateVisionAssistant();
+        // Global screen navigation (only when authenticated and NOT on login/register)
+        if (!isAuthScreen && userRef.current) {
+          if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            const seq: ScreenId[] = [
+              'dashboard', 'topics', 'voice_practice', 'pilot_demo',
+              'mock_exam', 'results', 'ai_tutor', 'revision_planner',
+              'progress', 'accessibility_settings',
+              'screen_reader_settings', 'learning_history'
+            ];
+            const curr = seq.indexOf(currentScreenRef.current);
+            const idx = e.key === 'ArrowDown'
+              ? (curr >= 0 && curr < seq.length - 1 ? curr + 1 : 0)
+              : (curr > 0 ? curr - 1 : seq.length - 1);
+            navigateTo(seq[idx]);
+            return;
           }
-          return;
+
+          // Authoritative Registry-driven navigation matching SCREEN_REGISTRY destinations exactly
+          const navMatch = resolveNavigationShortcut(key);
+          if (navMatch) {
+            e.preventDefault();
+            announce(`Navigating to ${navMatch.title}`, 'assertive');
+            navigateTo(navMatch.destination);
+            return;
+          }
+
+          if (key === 'l') {
+            e.preventDefault();
+            announce('Signing out of candidate session', 'assertive');
+            logout();
+            return;
+          }
         }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [navigateTo, logout, stopSpeaking, activateVisionAssistant, deactivateVisionAssistant, setIsBlindMode, isBlindMode, announce]);
+  }, [navigateTo, logout, stopSpeaking, activateVisionAssistant, deactivateVisionAssistant, setIsBlindMode, isBlindMode, announce, selectInteractionMode, speakText]);
+
+  // 18. Always-on Microphone: Starts and stays listening after candidate clicks anywhere on screen
+  useEffect(() => {
+    const handleScreenClickOrTouch = () => {
+      if (interactionModeRef.current !== 'manual') {
+        const engine = voiceEngineRef.current;
+        if (!engine || !engine.isListening()) {
+          startVoiceListening();
+        }
+      }
+    };
+
+    window.addEventListener('click', handleScreenClickOrTouch, { capture: true });
+    window.addEventListener('pointerdown', handleScreenClickOrTouch, { capture: true });
+    window.addEventListener('touchstart', handleScreenClickOrTouch, { capture: true });
+
+    return () => {
+      window.removeEventListener('click', handleScreenClickOrTouch, { capture: true });
+      window.removeEventListener('pointerdown', handleScreenClickOrTouch, { capture: true });
+      window.removeEventListener('touchstart', handleScreenClickOrTouch, { capture: true });
+    };
+  }, [startVoiceListening]);
 
   // Computed properties
   const theme = (settings.theme === 'sapphire' ? 'default' : settings.theme) as ThemeMode;
@@ -912,6 +1180,12 @@ export function AccessibilityProvider({ children }: { children: ReactNode }) {
         isVisionMode: isBlindMode, setIsVisionMode: setIsBlindMode, toggleVisionMode: toggleBlindMode,
         isVisionAssistantActive, activateVisionAssistant, deactivateVisionAssistant,
         showKeyboardShortcutsModal, setShowKeyboardShortcutsModal,
+        interactionMode,
+        setInteractionMode: selectInteractionMode,
+        selectInteractionMode,
+        showModeSelectorModal,
+        setShowModeSelectorModal,
+        resetInteractionMode,
         isVoiceListening, micPermissionStatus,
         startVoiceListening, stopVoiceListening,
         registerVoiceHandler, playBeacon,
@@ -920,6 +1194,11 @@ export function AccessibilityProvider({ children }: { children: ReactNode }) {
       }}
     >
       <div id="voice-engine-aria-live" aria-live="polite" aria-atomic="true" className="sr-only" />
+      <AccessibilityModeSelectorModal
+        isOpen={showModeSelectorModal}
+        onClose={() => setShowModeSelectorModal(false)}
+        onSelectMode={selectInteractionMode}
+      />
       {children}
     </AccessibilityContext.Provider>
   );

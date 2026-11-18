@@ -96,6 +96,21 @@ export function PageEntryHelpBanner() {
     }
   }, [currentScreen, playSpokenHelp]);
 
+  // Listen for global custom event requesting inline keyboard shortcuts display
+  useEffect(() => {
+    const handleShowKeyboardEvent = () => {
+      setMode('keyboard');
+      setMinimized(false);
+      const heading = document.getElementById('page-help-banner-heading');
+      if (heading) {
+        heading.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    };
+
+    window.addEventListener('accessprep:show-inline-keyboard-help', handleShowKeyboardEvent);
+    return () => window.removeEventListener('accessprep:show-inline-keyboard-help', handleShowKeyboardEvent);
+  }, []);
+
   // Global keydown listeners for V, K, R, S when not typing in form inputs
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {

@@ -8,6 +8,7 @@ interface AccessibleFormFieldProps {
   type?: 'text' | 'email' | 'password' | 'tel';
   value: string;
   onChange: (value: string) => void;
+  onFocus?: () => void;
   onBlur?: () => void;
   onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
   placeholder?: string;
@@ -29,6 +30,7 @@ export function AccessibleFormField({
   type = 'text',
   value,
   onChange,
+  onFocus,
   onBlur,
   onKeyDown,
   placeholder,
@@ -93,6 +95,7 @@ export function AccessibleFormField({
           type={effectiveType}
           value={value}
           onChange={(e) => onChange(e.target.value)}
+          onFocus={onFocus}
           onBlur={onBlur}
           onKeyDown={onKeyDown}
           placeholder={placeholder}

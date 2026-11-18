@@ -22,6 +22,7 @@ import {
   Sparkles,
   RefreshCw,
   ShieldCheck,
+  ShieldAlert,
   TrendingUp,
   HelpCircle,
   Headphones,
@@ -30,6 +31,7 @@ import {
 import { useAccessibility } from '../context/AccessibilityContext.tsx';
 import { VoiceInputButton } from '../components/VoiceInputButton.tsx';
 import { AudioToolbar } from '../components/AudioToolbar.tsx';
+import { AccessibleExplanationCard } from '../components/common/AccessibleExplanationCard.tsx';
 import { Question, DiagnosticAttempt } from '../db/database.ts';
 import {
   DIAGNOSTIC_SECTIONS,
@@ -45,7 +47,9 @@ import { parseSpokenAnswer } from '../utils/answerParser.ts';
 import {
   formatFullQuestionPrompt,
   formatAllOptionsPrompt,
-  formatSingleOptionPrompt
+  formatSingleOptionPrompt,
+  repeatQuestionTextOnly,
+  repeatOptionsTextOnly
 } from '../utils/repeatQuestionHelper.ts';
 import {
   AcceptanceStatus,
@@ -125,7 +129,8 @@ export function PilotDemoScreen() {
     isVoiceListening,
     micPermissionStatus,
     registerVoiceHandler,
-    setIsExamActive
+    setIsExamActive,
+    pendingExamExit
   } = useAccessibility();
 
   const uid = user?.id || 'usr_candidate_01';
@@ -187,6 +192,10 @@ export function PilotDemoScreen() {
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  // Inline exit confirmation (triggered by Alt+Shift+X or voice "exit exam")
+  const [showExitConfirmPD, setShowExitConfirmPD] = useState(false);
+  const [pendingExitDestPD, setPendingExitDestPD] = useState<string | null>(null);
+  const showExitConfirmPDRef = useRef(false);
 
   // Results & History State
   const [attempts, setAttempts] = useState<EnrichedDiagnosticAttempt[]>([]);
@@ -345,6 +354,15 @@ export function PilotDemoScreen() {
       setIsExamActive(false);
     };
   }, [view, setIsExamActive, startVoiceListening]);
+
+  // Synchronize global pendingExamExit requests (e.g. from sidebar or navigation shortcuts)
+  useEffect(() => {
+    if (pendingExamExit && view === 'exam') {
+      setShowExitConfirmPD(true);
+      showExitConfirmPDRef.current = true;
+      setPendingExitDestPD(pendingExamExit.destination);
+    }
+  }, [pendingExamExit, view]);
 
   // Persist active exam state to sessionStorage on change
   useEffect(() => {
@@ -741,6 +759,10 @@ export function PilotDemoScreen() {
       setIsExamActive(false);
       setShowSubmitConfirm(false);
       showSubmitConfirmRef.current = false;
+      setShowExitConfirmPD(false);
+      showExitConfirmPDRef.current = false;
+      const exitDest = pendingExitDestPD;
+      setPendingExitDestPD(null);
       resetAcceptanceForNewAttempt();
       setInteractionState('COMPLETED');
       interactionStateRef.current = 'COMPLETED';
@@ -755,11 +777,19 @@ export function PilotDemoScreen() {
         return [savedAttempt, ...filtered];
       });
 
-      switchView('results', savedAttempt.id);
+      if (exitDest) {
+        const summarySpeech = `${PILOT_DEMO_SUBMITTED_SPEECH} Your examination has been submitted. Exiting to destination.`;
+        announce(summarySpeech, 'assertive');
+        speakText(summarySpeech, () => {
+          navigateTo(exitDest);
+        });
+      } else {
+        switchView('results', savedAttempt.id);
 
-      const summarySpeech = `${PILOT_DEMO_SUBMITTED_SPEECH} Your total score is ${savedAttempt.totalScore} out of ${savedAttempt.totalMax}, with ${savedAttempt.accuracyPercentage} percent accuracy. Displaying your diagnostic results and personalized recommendations.`;
-      announce(summarySpeech, 'assertive');
-      speakText(summarySpeech);
+        const summarySpeech = `${PILOT_DEMO_SUBMITTED_SPEECH} Your total score is ${savedAttempt.totalScore} out of ${savedAttempt.totalMax}, with ${savedAttempt.accuracyPercentage} percent accuracy. Displaying your diagnostic results and personalized recommendations.`;
+        announce(summarySpeech, 'assertive');
+        speakText(summarySpeech);
+      }
     } catch (err: any) {
       console.error('Pilot Demo submission error:', err);
       const msg =
@@ -772,10 +802,22 @@ export function PilotDemoScreen() {
       isSubmittingRef.current = false;
       setIsSubmitting(false);
     }
-  }, [uid, clientSubmissionId, sessionKey, setIsExamActive, announce, speakText]);
+  }, [uid, clientSubmissionId, sessionKey, setIsExamActive, announce, speakText, pendingExitDestPD, navigateTo, switchView]);
 
   const handleSubmitRef = useRef(handleSubmitDiagnostic);
   handleSubmitRef.current = handleSubmitDiagnostic;
+
+  // Request inline exit confirmation for Pilot Demo exam
+  const requestPilotExamExit = useCallback((destination?: string) => {
+    if (view !== 'exam') return;
+    setShowExitConfirmPD(true);
+    showExitConfirmPDRef.current = true;
+    if (destination) setPendingExitDestPD(destination);
+    const msg = 'You are currently taking the Pilot Demo Diagnostic. Do you want to submit your answers and exit? Press Y to confirm submission and exit, or N to continue the examination.';
+    stopSpeaking();
+    announce(msg, 'assertive');
+    speakText(msg);
+  }, [view, stopSpeaking, announce, speakText]);
 
   // Countdown timer effect — starts EXACTLY ONCE when view === 'exam' and timerRunning === true
   useEffect(() => {
@@ -1139,6 +1181,36 @@ export function PilotDemoScreen() {
 
       // 2. Active exam voice commands
       if (viewRef.current === 'exam') {
+        // Handle inline exit confirmation (Alt+Shift+X flow or voice "exit exam")
+        if (showExitConfirmPDRef.current) {
+          if (isSubmitConfirmPhrase(clean) || clean === 'yes' || clean === 'yes submit' || clean === 'yes exit') {
+            handleSubmitDiagnostic();
+            return true;
+          }
+          if (isSubmitCancelPhrase(clean) || clean === 'no' || clean === 'no continue' || clean === 'cancel exit') {
+            setShowExitConfirmPD(false);
+            showExitConfirmPDRef.current = false;
+            setPendingExitDestPD(null);
+            const cancelMsg = 'Exit cancelled. Continuing your Pilot Demo Diagnostic.';
+            announce(cancelMsg, 'polite');
+            speakText(cancelMsg);
+            return true;
+          }
+          return true; // absorb other speech while exit confirmation is open
+        }
+
+        // Voice commands to request exam exit
+        if (
+          clean === 'exit exam' ||
+          clean === 'leave examination' ||
+          clean === 'leave exam' ||
+          clean === 'exit examination' ||
+          clean === 'submit and exit'
+        ) {
+          requestPilotExamExit();
+          return true;
+        }
+
         // 2a. Handle pending submission confirmation state (CONFIRMING_SUBMISSION)
         if (
           showSubmitConfirmRef.current ||
@@ -1193,11 +1265,15 @@ export function PilotDemoScreen() {
 
         // Direct voice commands requested in specification
         if (clean === 'read question' || clean === 'repeat question' || clean === 'repeat the question') {
-          readQuestionAloud(q, currentIdxRef.current, questionsRef.current.length);
+          // Repeat ONLY the question text — no prefix, no question number, no options
+          stopSpeaking();
+          speakText(repeatQuestionTextOnly(q));
           return true;
         }
         if (clean === 'repeat options' || clean === 'read options') {
-          repeatOptionsAloud(q);
+          // Repeat ONLY the options — no "The options are:" prefix
+          stopSpeaking();
+          speakText(repeatOptionsTextOnly(q));
           return true;
         }
         if (clean === 'explain this question' || clean === 'explain question') {
@@ -1402,7 +1478,8 @@ export function PilotDemoScreen() {
     speakText,
     playBeacon,
     startVoiceListening,
-    startInstructionsVoiceFlow
+    startInstructionsVoiceFlow,
+    requestPilotExamExit
   ]);
 
   // Keyboard shortcuts during instructions confirmation & active exam
@@ -1412,9 +1489,34 @@ export function PilotDemoScreen() {
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
         return;
       }
+
+      // Alt+Shift+X — Request inline exam exit confirmation (global during exam)
+      if (e.altKey && e.shiftKey && e.key.toUpperCase() === 'X') {
+        e.preventDefault();
+        requestPilotExamExit();
+        return;
+      }
+
       if (e.altKey || e.ctrlKey || e.metaKey) return;
 
       const key = e.key.toUpperCase();
+
+      // Handle inline exit confirm (Alt+Shift+X triggered) with Y/N/Escape
+      if (showExitConfirmPDRef.current && view === 'exam') {
+        if (key === 'Y') {
+          e.preventDefault();
+          handleSubmitDiagnostic();
+        } else if (key === 'N' || e.key === 'Escape') {
+          e.preventDefault();
+          setShowExitConfirmPD(false);
+          showExitConfirmPDRef.current = false;
+          setPendingExitDestPD(null);
+          const msg = 'Exit cancelled. Continuing your Pilot Demo Diagnostic.';
+          announce(msg, 'polite');
+          speakText(msg);
+        }
+        return;
+      }
 
       // 1. Start Confirmation Dialog keyboard shortcuts (Y / N / Escape)
       if (view === 'instructions' && showStartConfirmRef.current) {
@@ -1425,6 +1527,13 @@ export function PilotDemoScreen() {
           e.preventDefault();
           cancelPilotDemoStart();
         }
+        return;
+      }
+
+      // Enter on instructions view (not in confirm dialog) — request start
+      if (view === 'instructions' && e.key === 'Enter' && !showStartConfirmRef.current) {
+        e.preventDefault();
+        requestPilotDemoStart('KEYBOARD');
         return;
       }
 
@@ -1463,6 +1572,20 @@ export function PilotDemoScreen() {
         if (curQ) {
           readQuestionAloud(curQ, currentIdxRef.current, questionsRef.current.length);
         }
+      } else if (key === 'R' && !e.altKey && !isButtonFocused) {
+        // R — repeat ONLY the question text (no prefix, no question number, no options)
+        e.preventDefault();
+        const curQ = questionsRef.current[currentIdxRef.current];
+        if (curQ) { stopSpeaking(); speakText(repeatQuestionTextOnly(curQ)); }
+      } else if (key === 'O' && !e.altKey && !isButtonFocused) {
+        // O — repeat ONLY the options (no "The options are:" prefix)
+        e.preventDefault();
+        const curQ = questionsRef.current[currentIdxRef.current];
+        if (curQ) { stopSpeaking(); speakText(repeatOptionsTextOnly(curQ)); }
+      } else if (key === 'M' && !e.altKey && !isButtonFocused) {
+        // M — Mark or unmark question for review
+        e.preventDefault();
+        handleToggleMarkReview();
       } else if (e.key === 'Enter' && !isButtonFocused) {
         e.preventDefault();
         if (currentIdxRef.current < questionsRef.current.length - 1) {
@@ -1487,7 +1610,13 @@ export function PilotDemoScreen() {
     confirmPilotDemoStart,
     cancelPilotDemoStart,
     handleSubmitDiagnostic,
-    cancelPilotDemoSubmit
+    cancelPilotDemoSubmit,
+    requestPilotDemoStart,
+    handleToggleMarkReview,
+    stopSpeaking,
+    speakText,
+    requestPilotExamExit,
+    announce
   ]);
 
   // Palette summary counts
@@ -2003,6 +2132,60 @@ export function PilotDemoScreen() {
          =================================================================== */}
       {view === 'exam' && currentQ && (
         <div className="space-y-4" data-testid="pilot-active-exam-view">
+          {/* ── Inline Exam Exit Confirmation Banner (Alt+Shift+X or voice "exit exam") ── */}
+          {showExitConfirmPD && (
+            <div
+              role="alertdialog"
+              aria-modal="false"
+              aria-labelledby="pilot-exam-exit-confirm-title"
+              aria-describedby="pilot-exam-exit-confirm-desc"
+              className="p-4 bg-amber-50 border-2 border-amber-500 rounded-2xl shadow-lg"
+            >
+              <div className="flex items-start gap-3">
+                <ShieldAlert className="w-6 h-6 text-amber-600 flex-shrink-0 mt-0.5" aria-hidden="true" />
+                <div className="flex-1 min-w-0">
+                  <h3 id="pilot-exam-exit-confirm-title" className="text-sm font-bold text-amber-800 mb-1">
+                    Exit Pilot Demo Diagnostic?
+                  </h3>
+                  <p id="pilot-exam-exit-confirm-desc" className="text-xs text-amber-700 leading-relaxed mb-3">
+                    You are currently taking an examination. Do you want to <strong>submit your answers and exit</strong>?
+                    Your answers so far will be saved and evaluated.
+                  </p>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => handleSubmitDiagnostic()}
+                      disabled={isSubmitting}
+                      className="px-4 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-50 rounded-lg shadow-sm transition-all flex items-center gap-1.5"
+                      aria-label="Yes, submit answers and exit examination"
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" />
+                      {isSubmitting ? 'Submitting...' : 'Yes, Submit & Exit (Y)'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowExitConfirmPD(false);
+                        showExitConfirmPDRef.current = false;
+                        setPendingExitDestPD(null);
+                        const msg = 'Exit cancelled. Continuing your Pilot Demo Diagnostic.';
+                        announce(msg, 'polite');
+                        speakText(msg);
+                      }}
+                      className="px-4 py-2 text-xs font-semibold text-amber-800 bg-white hover:bg-amber-100 rounded-lg border border-amber-300 transition-all"
+                      aria-label="No, cancel exit and continue examination"
+                    >
+                      No, Continue Exam (N)
+                    </button>
+                    <span className="text-xs text-amber-600 ml-auto">
+                      Press <kbd className="font-mono font-bold">Y</kbd> to submit · <kbd className="font-mono font-bold">N</kbd> or <kbd className="font-mono font-bold">Esc</kbd> to cancel
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Submission Error Banner with Safe Retry */}
           {submitError && (
             <div
@@ -2112,22 +2295,32 @@ export function PilotDemoScreen() {
                     type="button"
                     data-action="repeat-question"
                     data-testid="pilot-repeat-question"
-                    onClick={() => readQuestionAloud(currentQ, currentIdx, questions.length)}
+                    onClick={() => {
+                      stopSpeaking();
+                      speakText(repeatQuestionTextOnly(currentQ));
+                    }}
                     className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold bg-[#EEF4FF] hover:bg-[#D0DEFF] text-[#1749E8] rounded-lg border border-[#D0DEFF] transition-colors"
+                    aria-label="Repeat current question text only (Keyboard shortcut: R)"
+                    title="Repeat question text only (R)"
                   >
                     <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
-                    <span>Repeat Question</span>
+                    <span>Repeat Question (R)</span>
                   </button>
 
                   <button
                     type="button"
                     data-action="repeat-options"
                     data-testid="pilot-repeat-options"
-                    onClick={() => repeatOptionsAloud(currentQ)}
+                    onClick={() => {
+                      stopSpeaking();
+                      speakText(repeatOptionsTextOnly(currentQ));
+                    }}
                     className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold bg-[#F8F9FB] hover:bg-[#EEF4FF] text-[#172033] hover:text-[#1749E8] rounded-lg border border-[#E8EBF0] transition-colors"
+                    aria-label="Repeat answer options only (Keyboard shortcut: O)"
+                    title="Repeat options only (O)"
                   >
                     <List className="w-3.5 h-3.5" aria-hidden="true" />
-                    <span>Repeat Options</span>
+                    <span>Repeat Options (O)</span>
                   </button>
 
                   {isPausedSpeaking ? (
@@ -2262,9 +2455,13 @@ export function PilotDemoScreen() {
                       } else if (parsed.command === 'previous' && currentIdxRef.current > 0) {
                         handleGoToQuestion(currentIdxRef.current - 1);
                       } else if (parsed.command === 'repeat') {
-                        readQuestionAloud(currentQ, currentIdxRef.current, questionsRef.current.length);
+                        // Repeat ONLY the question text — no prefix, no question number, no options
+                        stopSpeaking();
+                        speakText(repeatQuestionTextOnly(currentQ));
                       } else if (parsed.command === 'repeat_options') {
-                        repeatOptionsAloud(currentQ);
+                        // Repeat ONLY the options — no "The options are:" prefix
+                        stopSpeaking();
+                        speakText(repeatOptionsTextOnly(currentQ));
                       } else if (parsed.command === 'mark_review') {
                         handleToggleMarkReview();
                       }
@@ -2281,6 +2478,8 @@ export function PilotDemoScreen() {
                     type="button"
                     onClick={handleToggleMarkReview}
                     data-testid="pilot-mark-review-btn"
+                    title="Mark question for review (M)"
+                    aria-label="Mark question for review (Keyboard shortcut: M)"
                     className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-bold border transition-colors ${
                       answers[currentQ.question_id]?.markedForReview
                         ? 'bg-amber-100 text-amber-950 border-amber-400'
@@ -2291,7 +2490,7 @@ export function PilotDemoScreen() {
                     <span>
                       {answers[currentQ.question_id]?.markedForReview
                         ? 'Marked for Review'
-                        : 'Mark for Review'}
+                        : 'Mark for Review (M)'}
                     </span>
                   </button>
 
@@ -3127,47 +3326,20 @@ export function PilotDemoScreen() {
                     return true;
                   })
                   .map((r, idx) => (
-                    <div
-                      key={r.questionId}
-                      className="p-4 rounded-xl bg-[#F8F9FB] border border-[#E8EBF0] space-y-2"
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="text-xs font-bold text-[#172033]">
-                          Sec {r.section} · {r.subject} · <span className="text-[#1749E8]">{r.topic}</span>
-                        </span>
-                        <span
-                          className={`text-xs font-bold px-2 py-0.5 rounded ${
-                            r.isCorrect
-                              ? 'bg-emerald-100 text-[#15803D]'
-                              : r.isAnswered
-                              ? 'bg-red-100 text-[#DC2626]'
-                              : 'bg-slate-200 text-[#53627A]'
-                          }`}
-                        >
-                          {r.isCorrect
-                            ? `Correct (+${r.marksAwarded})`
-                            : r.isAnswered
-                            ? `Incorrect (${r.marksAwarded})`
-                            : 'Unanswered (0)'}
-                        </span>
-                      </div>
-                      <p className="text-xs sm:text-sm font-bold text-[#172033]">{r.questionText}</p>
-                      <div className="flex flex-wrap items-center gap-4 text-xs">
-                        <span>
-                          Your Answer:{' '}
-                          <strong className={r.isCorrect ? 'text-[#15803D]' : 'text-[#DC2626]'}>
-                            {r.selectedOption || 'Not Answered'}
-                          </strong>
-                        </span>
-                        <span>
-                          Correct Answer: <strong className="text-[#15803D]">Option {r.correctAnswer}</strong>
-                        </span>
-                      </div>
-                      {r.explanation && (
-                        <p className="text-xs text-[#53627A] bg-white p-2.5 rounded-lg border border-[#E8EBF0]">
-                          <strong>Explanation:</strong> {r.explanation}
-                        </p>
-                      )}
+                    <div key={r.questionId} className="pt-2">
+                      <AccessibleExplanationCard
+                        questionText={`Diagnostic Question ${idx + 1}: ${r.questionText}`}
+                        selectedOption={r.selectedOption}
+                        selectedOptionText={r.selectedOption ? (r as any)[`option${r.selectedOption}`] : undefined}
+                        correctOption={r.correctAnswer}
+                        correctOptionText={(r as any)[`option${r.correctAnswer}`]}
+                        isCorrect={r.isCorrect}
+                        explanation={r.explanation || 'Step-by-step academic explanation: Identify the key rule for this topic and eliminate contradictory options.'}
+                        subject={r.subject}
+                        topic={r.topic}
+                        section={r.section}
+                        marksAwarded={r.marksAwarded}
+                      />
                     </div>
                   ))}
               </div>

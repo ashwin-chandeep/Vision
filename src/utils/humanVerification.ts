@@ -37,50 +37,116 @@ export const VERIFIED_SPOKEN_PHRASES = [
   'Daily revision sharpens memory.'
 ];
 
-const DIGIT_WORD_MAP: Record<string, string> = {
+const SINGLE_DIGIT_MAP: Record<string, string> = {
   zero: '0',
   oh: '0',
   o: '0',
   one: '1',
   won: '1',
   two: '2',
+  to: '2',
+  too: '2',
   three: '3',
+  tree: '3',
+  free: '3',
   four: '4',
+  for: '4',
+  fore: '4',
   five: '5',
   six: '6',
   seven: '7',
   eight: '8',
+  ate: '8',
   nine: '9'
 };
 
+const TENS_WORD_MAP: Record<string, number> = {
+  twenty: 20,
+  thirty: 30,
+  forty: 40,
+  fifty: 50,
+  sixty: 60,
+  seventy: 70,
+  eighty: 80,
+  ninety: 90
+};
+
+const TEENS_WORD_MAP: Record<string, string> = {
+  ten: '10',
+  eleven: '11',
+  twelve: '12',
+  thirteen: '13',
+  fourteen: '14',
+  fifteen: '15',
+  sixteen: '16',
+  seventeen: '17',
+  eighteen: '18',
+  nineteen: '19'
+};
+
 /**
- * Extracts sequence of numerical digits from text, converting spoken number words to digits.
+ * Extracts sequence of numerical digits from text, converting spoken number words,
+ * homophones, compound numbers (e.g. "fifty eight thirty two" -> "5832"),
+ * and standard numeric characters to digits.
  */
 export function extractDigits(text: string): string {
   if (!text) return '';
   const clean = normalizePhrase(text);
-  const words = clean.split(' ');
+  const words = clean.split(' ').filter(Boolean);
   let result = '';
-  for (const w of words) {
-    if (DIGIT_WORD_MAP[w]) {
-      result += DIGIT_WORD_MAP[w];
-    } else {
-      const digitsOnly = w.replace(/\D/g, '');
-      if (digitsOnly) {
-        result += digitsOnly;
+
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+
+    // Check compound tens (e.g., "fifty" + "eight" -> 58)
+    if (TENS_WORD_MAP[w] !== undefined) {
+      const tensVal = TENS_WORD_MAP[w];
+      const nextWord = words[i + 1];
+      if (nextWord && SINGLE_DIGIT_MAP[nextWord] && SINGLE_DIGIT_MAP[nextWord] !== '0') {
+        const unitsVal = parseInt(SINGLE_DIGIT_MAP[nextWord], 10);
+        result += String(tensVal + unitsVal);
+        i++; // skip next word
+      } else {
+        result += String(tensVal);
       }
+      continue;
+    }
+
+    if (TEENS_WORD_MAP[w]) {
+      result += TEENS_WORD_MAP[w];
+      continue;
+    }
+
+    if (SINGLE_DIGIT_MAP[w]) {
+      result += SINGLE_DIGIT_MAP[w];
+      continue;
+    }
+
+    // Direct numeric digits
+    const digitsOnly = w.replace(/\D/g, '');
+    if (digitsOnly) {
+      result += digitsOnly;
     }
   }
+
   return result;
 }
 
 /**
- * Generates a 3 to 4 digit random numeric audio CAPTCHA string.
+ * Generates a 4-digit cryptographically random numeric audio CAPTCHA string.
  */
 export function generateRandomDigits(): string {
   const digits: number[] = [];
-  for (let i = 0; i < 4; i++) {
-    digits.push(Math.floor(Math.random() * 10));
+  const randomBytes = new Uint8Array(4);
+  if (typeof globalThis.crypto !== 'undefined' && typeof globalThis.crypto.getRandomValues === 'function') {
+    globalThis.crypto.getRandomValues(randomBytes);
+    for (let i = 0; i < 4; i++) {
+      digits.push(randomBytes[i] % 10);
+    }
+  } else {
+    for (let i = 0; i < 4; i++) {
+      digits.push(Math.floor(Math.random() * 10));
+    }
   }
   return digits.join(' ');
 }

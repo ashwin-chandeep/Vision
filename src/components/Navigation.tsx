@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { useAccessibility } from '../context/AccessibilityContext.tsx';
 import { SCREEN_REGISTRY, ScreenId } from '../types/screens.ts';
+import { getPageHelp } from '../data/pageHelpRegistry.ts';
 
 interface NavigationProps {
   onOpenHelp?: () => void;
@@ -41,7 +42,9 @@ export function Navigation({ onOpenHelp }: NavigationProps) {
     toggleSidebar,
     isMobileNavOpen,
     setIsMobileNavOpen,
-    setShowKeyboardShortcutsModal
+    setShowKeyboardShortcutsModal,
+    speakText,
+    announce
   } = useAccessibility();
 
   const [showHelpDialog, setShowHelpDialog] = useState(false);
@@ -82,10 +85,16 @@ export function Navigation({ onOpenHelp }: NavigationProps) {
   const handleHelpClick = () => {
     if (onOpenHelp) {
       onOpenHelp();
-    } else if (setShowKeyboardShortcutsModal) {
-      setShowKeyboardShortcutsModal(true);
     } else {
-      setShowHelpDialog(true);
+      window.dispatchEvent(new CustomEvent('accessprep:show-inline-keyboard-help'));
+      const bannerEl = document.getElementById('page-help-banner-heading');
+      if (bannerEl) {
+        bannerEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+      const rec = getPageHelp(currentScreen);
+      const textToSpeak = `${rec.spokenKeyboardHelp} Press R to replay, press V for voice commands, or press S to continue.`;
+      announce(textToSpeak, 'polite');
+      speakText(textToSpeak);
     }
     if (isMobileNavOpen) {
       setIsMobileNavOpen(false);

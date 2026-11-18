@@ -40,12 +40,13 @@ export const PAGE_HELP_REGISTRY: Record<string, PageHelpRecord> = {
     keyboardShortcuts: [
       { key: 'Enter / L', label: 'Enter / L', actionDescription: 'Navigate to Candidate Login.' },
       { key: 'R', label: 'R', actionDescription: 'Navigate to Candidate Registration.' },
-      { key: 'V', label: 'V', actionDescription: 'Activate Voice Mode toggle.' },
-      { key: 'Alt + /', label: 'Alt + /', actionDescription: 'Open Global Keyboard Shortcuts Reference.' },
+      { key: 'Alt + V', label: 'Alt + V', actionDescription: 'Switch to Voice Assistance Mode.' },
+      { key: 'Alt + K', label: 'Alt + K', actionDescription: 'Switch to Keyboard Shortcut Mode.' },
+      { key: 'Alt + M', label: 'Alt + M', actionDescription: 'Switch to Independent Manual Mode.' },
       { key: 'Escape', label: 'Escape', actionDescription: 'Halt ongoing speech immediately.' }
     ],
     spokenVoiceHelp: 'Welcome page voice commands: Say "Start Voice Mode" to enable voice guidance. Say "Candidate Login" or "Go to Login" to sign in. Say "Register Account" to create a new profile. Say "Stop" to silence speech.',
-    spokenKeyboardHelp: 'Welcome page keyboard shortcuts: Press Enter or L to go to Login. Press R to Register. Press V to activate Voice Mode. Press Escape to stop speech.'
+    spokenKeyboardHelp: 'Welcome page keyboard shortcuts: Press Enter or L to go to Login. Press R to Register. Press Alt and V for Voice Mode. Press Alt and K for Keyboard Mode. Press Alt and M for Manual Mode. Press Escape to stop speech.'
   },
 
   login: {
@@ -63,17 +64,21 @@ export const PAGE_HELP_REGISTRY: Record<string, PageHelpRecord> = {
       { command: 'Go to Registration', description: 'Navigates to the Candidate Registration screen.' }
     ],
     keyboardShortcuts: [
-      { key: 'V', label: 'V', actionDescription: 'Start voice-guided login workflow.' },
-      { key: 'C', label: 'C', actionDescription: 'Start audio CAPTCHA playback and voice capture.' },
-      { key: 'Enter', label: 'Enter', actionDescription: 'Submit login credentials and sign in.' },
-      { key: 'R', label: 'R', actionDescription: 'Refresh audio verification challenge.' },
-      { key: 'Alt + R', label: 'Alt + R', actionDescription: 'Play audio verification challenge digits.' },
+      { key: 'L', label: 'L', actionDescription: 'Focus Email / Roll Number field.' },
+      { key: 'P', label: 'P', actionDescription: 'Focus Password field.' },
+      { key: 'C', label: 'C', actionDescription: 'Auto-fill audio verification code.' },
+      { key: 'R', label: 'R', actionDescription: 'Play audio verification code aloud.' },
+      { key: 'F2', label: 'F2', actionDescription: 'Re-read current field value.' },
+      { key: 'Y', label: 'Y', actionDescription: 'Confirm field value or sign in.' },
+      { key: 'N', label: 'N', actionDescription: 'Clear field or cancel.' },
+      { key: 'S', label: 'S', actionDescription: 'Review details and sign in.' },
       { key: 'G', label: 'G', actionDescription: 'Go to Candidate Registration.' },
-      { key: 'K', label: 'K', actionDescription: 'Switch to keyboard input and focus email box.' },
+      { key: 'H', label: 'H', actionDescription: 'Login instructions and help.' },
+      { key: 'K', label: 'K', actionDescription: 'Read all login shortcuts aloud.' },
       { key: 'Escape', label: 'Escape', actionDescription: 'Stop speaking immediately.' }
     ],
     spokenVoiceHelp: 'Login voice commands: Say "Start Voice Login" to be prompted for your registered email address and password. Say "Start Audio CAPTCHA" to hear and speak the verification digits. Say "Repeat CAPTCHA" to listen again. Say "Refresh CAPTCHA" for a new code. Say "Read Instructions" for guidance. Say "Go to Registration" to register.',
-    spokenKeyboardHelp: 'Login keyboard shortcuts: Press V to start voice login. Press C to hear and speak the audio verification code. Press Enter to sign in. Press R to generate a new verification code. Press G to go to Registration. Press K to focus email box. Press Escape to stop speaking.'
+    spokenKeyboardHelp: 'Login keyboard shortcuts: Press L to type email address or roll number. Press P to enter confidential password. Press C to auto-fill audio verification code. Press R to play verification code aloud. Press F 2 to re-read current field. Press Y to confirm. Press N to clear. Press S to sign in. Press G to go to Registration. Press H for help. Press K to hear this description again. Press Escape to stop speech.'
   },
 
   register: {
@@ -90,15 +95,18 @@ export const PAGE_HELP_REGISTRY: Record<string, PageHelpRecord> = {
       { command: 'Use Keyboard', description: 'Focuses candidate name input for manual entry.' }
     ],
     keyboardShortcuts: [
-      { key: 'V', label: 'V', actionDescription: 'Start guided voice registration.' },
-      { key: 'C', label: 'C', actionDescription: 'Start audio verification challenge.' },
-      { key: 'Enter', label: 'Enter', actionDescription: 'Submit registration form.' },
-      { key: 'L', label: 'L', actionDescription: 'Go to Login page.' },
-      { key: 'R', label: 'R', actionDescription: 'Refresh verification code.' },
-      { key: 'Escape', label: 'Escape', actionDescription: 'Stop speech.' }
+      { key: 'L', label: 'L', actionDescription: 'Focus Email field.' },
+      { key: 'P', label: 'P', actionDescription: 'Focus Password field.' },
+      { key: 'C', label: 'C', actionDescription: 'Auto-fill audio verification code.' },
+      { key: 'R', label: 'R', actionDescription: 'Play audio verification code aloud.' },
+      { key: 'S', label: 'S', actionDescription: 'Submit registration form.' },
+      { key: 'G', label: 'G', actionDescription: 'Go to Candidate Login.' },
+      { key: 'H', label: 'H', actionDescription: 'Registration help and scribe details.' },
+      { key: 'K', label: 'K', actionDescription: 'Read all registration shortcuts aloud.' },
+      { key: 'Escape', label: 'Escape', actionDescription: 'Stop speech immediately.' }
     ],
     spokenVoiceHelp: 'Registration voice commands: Say "Start Voice Registration" for 6-step guided registration. Say "Start Audio CAPTCHA" to hear and speak verification digits. Say "Repeat CAPTCHA" to replay digits. Say "Go to Login" to sign in. Say "Read Instructions" for PwD scribe details.',
-    spokenKeyboardHelp: 'Registration keyboard shortcuts: Press V to begin voice registration. Press C to hear and speak the verification code. Press Enter to submit registration. Press L to go to Login. Press R to refresh verification code. Press Escape to stop speech.'
+    spokenKeyboardHelp: 'Registration keyboard shortcuts: Press L to type email address. Press P to enter password. Press C to auto-fill audio verification code. Press R to play verification code aloud. Press S to submit registration. Press G to go to Login. Press H for help. Press K to hear shortcuts. Press Escape to stop speech.'
   },
 
   dashboard: {
@@ -116,18 +124,20 @@ export const PAGE_HELP_REGISTRY: Record<string, PageHelpRecord> = {
       { command: 'Read Overview / Read Aloud', description: 'Reads your Readiness Index, accuracy, and practice statistics.' }
     ],
     keyboardShortcuts: [
-      { key: '1', label: '1', actionDescription: 'Launch Voice Practice Session.' },
-      { key: '2', label: '2', actionDescription: 'Launch Mock Examination.' },
-      { key: '3', label: '3', actionDescription: 'Open AI Tutor Scribe.' },
-      { key: '4', label: '4', actionDescription: 'Open Adaptive Revision Planner.' },
-      { key: '5', label: '5', actionDescription: 'Open Subject & Topic Explorer.' },
-      { key: '6', label: '6', actionDescription: 'Open Progress Analytics.' },
-      { key: 'P', label: 'P', actionDescription: 'Start Pilot Demo Diagnostic.' },
-      { key: 'Alt + D', label: 'Alt + D', actionDescription: 'Refresh Dashboard Overview.' },
-      { key: 'Escape', label: 'Escape', actionDescription: 'Halt ongoing speech immediately.' }
+      { key: 'Alt + P', label: 'Alt + P', actionDescription: 'Voice Practice — Opens Voice-First Practice screen (Screen 6).' },
+      { key: 'Alt + E', label: 'Alt + E', actionDescription: 'Mock Examination — Opens full timed SSC MTS test (Screen 7).' },
+      { key: 'Alt + S', label: 'Alt + S', actionDescription: 'Subject & Topic Explorer — Opens Subject & Topic Explorer (Screen 5).' },
+      { key: 'Alt + O', label: 'Alt + O', actionDescription: 'Pilot Demo Diagnostic — Opens 20-question Diagnostic (Screen 17).' },
+      { key: 'Alt + T', label: 'Alt + T', actionDescription: 'AI Syllabus Tutor — Opens AI Tutor Scribe (Screen 9).' },
+      { key: 'Alt + R', label: 'Alt + R', actionDescription: 'Revision Planner — Opens Spaced Repetition Planner (Screen 10).' },
+      { key: 'Alt + A', label: 'Alt + A', actionDescription: 'Progress Analytics — Opens Performance Analytics (Screen 11).' },
+      { key: 'Alt + U', label: 'Alt + U', actionDescription: 'Results & Explanations — Opens Examination Results (Screen 8).' },
+      { key: 'Alt + D', label: 'Alt + D', actionDescription: 'Candidate Dashboard — Navigates to Assessment Dashboard (Screen 4).' },
+      { key: 'Alt + Space', label: 'Alt + Space', actionDescription: 'Vision Voice Assistant — Toggles microphone listening state.' },
+      { key: 'Escape', label: 'Escape', actionDescription: 'Stop Audio Speech — Halts ongoing speech immediately.' }
     ],
     spokenVoiceHelp: 'Dashboard voice commands: Say "Start Practice" for Voice Practice. Say "Mock Exam" for full test. Say "AI Tutor" for syllabus doubts. Say "Revision Planner" for flashcard drill. Say "Explore Subjects" to browse syllabus. Say "Progress Analytics" for scores. Say "Read Overview" for summary statistics.',
-    spokenKeyboardHelp: 'Dashboard keyboard shortcuts: Press 1 for Voice Practice. Press 2 for Mock Exam. Press 3 for AI Tutor. Press 4 for Revision Planner. Press 5 for Explore Subjects. Press 6 for Progress Analytics. Press P for Pilot Demo. Press Escape to stop speech.'
+    spokenKeyboardHelp: 'Dashboard keyboard shortcuts: Press Alt and P to open Voice Practice. Press Alt and E to open Mock Examination. Press Alt and S to open Subject and Topic Explorer. Press Alt and O to open Pilot Demo Diagnostic. Press Alt and T to open AI Syllabus Tutor. Press Alt and R to open Revision Planner. Press Alt and A to open Progress Analytics. Press Alt and U to open Results and Explanations. Press Alt and D to refresh Dashboard. Press Alt and Space to toggle Voice Assistant. Press Escape to stop speech.'
   },
 
   topics: {
@@ -174,19 +184,21 @@ export const PAGE_HELP_REGISTRY: Record<string, PageHelpRecord> = {
       { command: 'Stop / Quiet', description: 'Stops speech and reactivates listening beacon.' }
     ],
     keyboardShortcuts: [
-      { key: '1 / A', label: '1 or A', actionDescription: 'Select Option A.' },
-      { key: '2 / B', label: '2 or B', actionDescription: 'Select Option B.' },
-      { key: '3 / C', label: '3 or C', actionDescription: 'Select Option C.' },
-      { key: '4 / D', label: '4 or D', actionDescription: 'Select Option D.' },
-      { key: 'R', label: 'R', actionDescription: 'Repeat current question aloud.' },
-      { key: 'O', label: 'O', actionDescription: 'Repeat all four options aloud.' },
-      { key: 'N / Enter', label: 'N / Enter', actionDescription: 'Proceed to next question.' },
-      { key: 'E', label: 'E', actionDescription: 'Read step-by-step explanation.' },
-      { key: 'M', label: 'M', actionDescription: 'Open subject selector dropdown.' },
-      { key: 'Escape', label: 'Escape', actionDescription: 'Stop speech.' }
+      { key: '1 / A', label: '1 or A', actionDescription: 'Select Option A and announce "You selected option A."' },
+      { key: '2 / B', label: '2 or B', actionDescription: 'Select Option B and announce "You selected option B."' },
+      { key: '3 / C', label: '3 or C', actionDescription: 'Select Option C and announce "You selected option C."' },
+      { key: '4 / D', label: '4 or D', actionDescription: 'Select Option D and announce "You selected option D."' },
+      { key: 'R', label: 'R', actionDescription: 'Repeat ONLY the current question text — no prefix, no question number, no options.' },
+      { key: 'O', label: 'O', actionDescription: 'Repeat ONLY all four answer options — no intro phrase.' },
+      { key: 'Space', label: 'Space', actionDescription: 'Read the full question with prefix and all options (auto-read mode).' },
+      { key: 'N / Enter', label: 'N / Enter', actionDescription: 'Proceed to next question after answering.' },
+      { key: 'P / LeftArrow', label: 'P or Left Arrow', actionDescription: 'Navigate to previous question.' },
+      { key: 'E', label: 'E', actionDescription: 'Read step-by-step explanation for the last answer.' },
+      { key: 'J', label: 'J', actionDescription: 'Return to subject selection screen (Jump to subjects).' },
+      { key: 'Escape', label: 'Escape', actionDescription: 'Stop speech immediately.' }
     ],
-    spokenVoiceHelp: 'Voice Practice voice commands: Say "Option A", "Option B", "Option C", or "Option D" to answer. Say "Repeat Question" to hear the question again. Say "Repeat Options" to hear choices. Say "Next Question" to proceed. Say "Read Explanation" for detailed solution. Say "Stop" to silence audio.',
-    spokenKeyboardHelp: 'Voice Practice keyboard shortcuts: Press 1 or A for Option A, 2 or B for Option B, 3 or C for Option C, 4 or D for Option D. Press R to repeat question. Press O to repeat options. Press N or Enter for next question. Press E for explanation. Press Escape to stop audio.'
+    spokenVoiceHelp: 'Voice Practice voice commands: Say "Option A", "Option B", "Option C", or "Option D" to answer. Say "Repeat Question" to hear only the question text. Say "Repeat Options" to hear only the answer choices. Say "Next Question" to proceed. Say "Read Explanation" for detailed solution. Say "Stop" to silence audio.',
+    spokenKeyboardHelp: 'Voice Practice keyboard shortcuts: Press 1 or A for Option A, 2 or B for Option B, 3 or C for Option C, 4 or D for Option D. Press R to repeat only the question text. Press O to repeat only the options. Press Space to read the full question. Press N or Enter for next question. Press P or Left Arrow for previous question. Press J to change subject. Press Escape to stop audio.'
   },
 
   mock_exam: {
@@ -204,21 +216,25 @@ export const PAGE_HELP_REGISTRY: Record<string, PageHelpRecord> = {
       { command: 'Submit Examination', description: 'Finalizes test submission and generates scorecard.' }
     ],
     keyboardShortcuts: [
-      { key: '1 / A', label: '1 or A', actionDescription: 'Select Option A.' },
-      { key: '2 / B', label: '2 or B', actionDescription: 'Select Option B.' },
-      { key: '3 / C', label: '3 or C', actionDescription: 'Select Option C.' },
-      { key: '4 / D', label: '4 or D', actionDescription: 'Select Option D.' },
-      { key: 'N / Enter', label: 'N / Enter', actionDescription: 'Save and proceed to Next question.' },
-      { key: 'P / LeftArrow', label: 'P or LeftArrow', actionDescription: 'Navigate to Previous question.' },
+      { key: '1 / A', label: '1 or A', actionDescription: 'Select Option A and announce "You selected option A."' },
+      { key: '2 / B', label: '2 or B', actionDescription: 'Select Option B and announce "You selected option B."' },
+      { key: '3 / C', label: '3 or C', actionDescription: 'Select Option C and announce "You selected option C."' },
+      { key: '4 / D', label: '4 or D', actionDescription: 'Select Option D and announce "You selected option D."' },
+      { key: 'R', label: 'R', actionDescription: 'Repeat ONLY the current question text — no prefix, no question number, no options.' },
+      { key: 'O', label: 'O', actionDescription: 'Repeat ONLY all four answer options — no intro phrase.' },
+      { key: 'Space', label: 'Space', actionDescription: 'Read the full question with prefix and options (auto-read mode).' },
+      { key: 'N / Enter', label: 'N or Enter', actionDescription: 'Save response and proceed to Next question.' },
+      { key: 'P / LeftArrow', label: 'P or Left Arrow', actionDescription: 'Navigate to Previous question.' },
       { key: 'M', label: 'M', actionDescription: 'Mark or unmark question for Review.' },
-      { key: 'C', label: 'C', actionDescription: 'Clear current answer selection.' },
-      { key: 'R', label: 'R', actionDescription: 'Repeat question and options aloud.' },
+      { key: 'Alt + Shift + X', label: 'Alt + Shift + X', actionDescription: 'Request accessible exit confirmation to submit answers and leave the examination.' },
+      { key: 'Y', label: 'Y', actionDescription: 'Confirm submit & exit when exit confirmation is displayed.' },
+      { key: 'N', label: 'N', actionDescription: 'Cancel exit and continue taking the examination.' },
       { key: 'T', label: 'T', actionDescription: 'Check remaining examination time.' },
       { key: 'S', label: 'S', actionDescription: 'Submit examination.' },
-      { key: 'Escape', label: 'Escape', actionDescription: 'Halt ongoing speech.' }
+      { key: 'Escape', label: 'Escape', actionDescription: 'Halt ongoing speech immediately.' }
     ],
-    spokenVoiceHelp: 'Mock Exam voice commands: Say "Start Exam" to begin. Say "Option A", "Option B", "Option C", or "Option D" to answer. Say "Next" or "Previous" to navigate. Say "Mark for Review" to flag question. Say "Clear Response" to deselect. Say "Time Remaining" for timer status. Say "Submit Examination" to finish.',
-    spokenKeyboardHelp: 'Mock Exam keyboard shortcuts: Press 1 to 4 or A to D to choose answer. Press Enter or N for next question. Press P or Left Arrow for previous question. Press M to mark review. Press C to clear response. Press R to repeat question. Press T for time remaining. Press S to submit exam. Press Escape to stop speech.'
+    spokenVoiceHelp: 'Mock Exam voice commands: Say "Start Exam" to begin. Say "Option A", "Option B", "Option C", or "Option D" to answer. Say "Repeat Question" to hear only the question text. Say "Repeat Options" to hear only the options. Say "Next" or "Previous" to navigate. Say "Time Remaining" for timer status. Say "Submit Examination" to finish.',
+    spokenKeyboardHelp: 'Mock Exam keyboard shortcuts: Press 1 to 4 or A to D to choose answer. Press R to repeat only the question text. Press O to repeat only the options. Press Space to read the full question. Press Enter or N for next question. Press P or Left Arrow for previous question. Press M to mark review. Press T for time remaining. Press S to submit exam. Press Escape to stop speech.'
   },
 
   results: {
@@ -232,14 +248,14 @@ export const PAGE_HELP_REGISTRY: Record<string, PageHelpRecord> = {
       { command: 'Dashboard / Return Overview', description: 'Returns to student dashboard.' }
     ],
     keyboardShortcuts: [
-      { key: 'R', label: 'R', actionDescription: 'Review questions and detailed solutions.' },
-      { key: 'P', label: 'P', actionDescription: 'Retake practice on missed topics.' },
-      { key: 'D', label: 'D', actionDescription: 'Return to Student Dashboard.' },
+      { key: 'R', label: 'R', actionDescription: 'Review questions and detailed academic explanations.' },
+      { key: 'Alt + P', label: 'Alt + P', actionDescription: 'Voice Practice — Retake practice on missed topics (Screen 6).' },
+      { key: 'Alt + D', label: 'Alt + D', actionDescription: 'Candidate Dashboard — Return to Dashboard (Screen 4).' },
       { key: 'E', label: 'E', actionDescription: 'Download Scorecard PDF / Report.' },
-      { key: 'Escape', label: 'Escape', actionDescription: 'Stop speech.' }
+      { key: 'Escape', label: 'Escape', actionDescription: 'Stop speech immediately.' }
     ],
     spokenVoiceHelp: 'Results voice commands: Say "Read Score" for total marks and percentile. Say "Review Answers" to hear explanations for missed questions. Say "Practice Again" to retake missed topics. Say "Dashboard" to return home.',
-    spokenKeyboardHelp: 'Results keyboard shortcuts: Press R to review answer explanations. Press P to retake practice. Press D to return to Dashboard. Press E to export score report. Press Escape to stop speech.'
+    spokenKeyboardHelp: 'Results keyboard shortcuts: Press R to review answer explanations. Press Alt and P to practice missed topics in Voice Practice. Press Alt and D to return to Dashboard. Press E to export score report. Press Escape to stop speech.'
   },
 
   ai_tutor: {
@@ -255,19 +271,15 @@ export const PAGE_HELP_REGISTRY: Record<string, PageHelpRecord> = {
       { command: 'Select Subject Math / Reasoning / GK / English', description: 'Switches the tutor subject context.' }
     ],
     keyboardShortcuts: [
-      { key: 'Enter / A', label: 'Enter / A', actionDescription: 'Submit query to AI Tutor.' },
+      { key: 'Enter', label: 'Enter', actionDescription: 'Submit query to AI Tutor.' },
       { key: 'C', label: 'C', actionDescription: 'Clear chat input box.' },
       { key: 'R', label: 'R', actionDescription: 'Repeat last AI tutor explanation.' },
-      { key: 'S', label: 'S', actionDescription: 'Stop ongoing speech.' },
-      { key: '1', label: '1', actionDescription: 'Ask compound interest vs simple interest shortcut.' },
-      { key: '2', label: '2', actionDescription: 'Ask syllogism shortcut question.' },
-      { key: '3', label: '3', actionDescription: 'Ask Fundamental Rights in Indian Constitution.' },
-      { key: '4', label: '4', actionDescription: 'Ask subject-verb agreement rules.' },
-      { key: 'K', label: 'K', actionDescription: 'Configure Gemini API Key.' },
+      { key: 'Alt + D', label: 'Alt + D', actionDescription: 'Candidate Dashboard — Return to Dashboard (Screen 4).' },
+      { key: 'Alt + P', label: 'Alt + P', actionDescription: 'Voice Practice — Open Voice Practice (Screen 6).' },
       { key: 'Escape', label: 'Escape', actionDescription: 'Halt tutor speech immediately.' }
     ],
     spokenVoiceHelp: 'AI Tutor voice commands: Speak any doubt directly into your microphone. Say "Repeat" or "Read Again" to replay the last explanation. Say "Read Slower" to reduce speech rate. Say "Pause Reading" or "Resume Reading" to control audio. Say "Stop" to silence tutor.',
-    spokenKeyboardHelp: 'AI Tutor keyboard shortcuts: Press Enter or A to send query. Press C to clear input. Press R to repeat explanation. Press S to stop speech. Press 1 to 4 to ask sample syllabus questions. Press K to configure Gemini API Key. Press Escape to stop audio.'
+    spokenKeyboardHelp: 'AI Tutor keyboard shortcuts: Press Enter to send query. Press C to clear input. Press R to repeat explanation. Press Alt and D to return to Dashboard. Press Alt and P to open Voice Practice. Press Escape to stop audio.'
   },
 
   revision_planner: {
@@ -283,18 +295,18 @@ export const PAGE_HELP_REGISTRY: Record<string, PageHelpRecord> = {
       { command: 'Pause Revision / Resume', description: 'Pauses or resumes flashcard drill session.' }
     ],
     keyboardShortcuts: [
-      { key: 'Space', label: 'Space', actionDescription: 'Flip card and reveal answer.' },
+      { key: 'Space', label: 'Space', actionDescription: 'Flip card and reveal verified answer.' },
       { key: '1', label: '1', actionDescription: 'Rate: Again (1 day interval).' },
       { key: '2', label: '2', actionDescription: 'Rate: Hard (2 days interval).' },
       { key: '3', label: '3', actionDescription: 'Rate: Good (4 days interval).' },
       { key: '4', label: '4', actionDescription: 'Rate: Easy (7 days interval).' },
-      { key: 'Q', label: 'Q', actionDescription: 'Read question aloud.' },
-      { key: 'A', label: 'A', actionDescription: 'Read answer aloud.' },
-      { key: 'P', label: 'P', actionDescription: 'Pause or resume drill.' },
-      { key: 'Escape', label: 'Escape', actionDescription: 'Stop speech.' }
+      { key: 'Q', label: 'Q', actionDescription: 'Read flashcard question aloud.' },
+      { key: 'A', label: 'A', actionDescription: 'Read flashcard answer aloud.' },
+      { key: 'Alt + D', label: 'Alt + D', actionDescription: 'Candidate Dashboard — Return to Dashboard (Screen 4).' },
+      { key: 'Escape', label: 'Escape', actionDescription: 'Stop speech immediately.' }
     ],
     spokenVoiceHelp: 'Revision Planner voice commands: Say "Reveal Answer" to flip the card. Rate your retention by saying "Again", "Hard", "Good", or "Easy". Say "Read Question" to hear question. Say "Read Answer" to hear answer. Say "Next Card" to advance.',
-    spokenKeyboardHelp: 'Revision Planner keyboard shortcuts: Press Space to flip card and reveal answer. Press 1 for Again, 2 for Hard, 3 for Good, 4 for Easy. Press Q to read question. Press A to read answer. Press P to pause drill. Press Escape to stop speech.'
+    spokenKeyboardHelp: 'Revision Planner keyboard shortcuts: Press Space to flip card and reveal answer. Press 1 for Again, 2 for Hard, 3 for Good, 4 for Easy. Press Q to read question. Press A to read answer. Press Alt and D to return to Dashboard. Press Escape to stop speech.'
   },
 
   progress: {
@@ -428,14 +440,23 @@ export const PAGE_HELP_REGISTRY: Record<string, PageHelpRecord> = {
       { command: 'Read Instructions', description: 'Announces complete diagnostic objectives.' }
     ],
     keyboardShortcuts: [
-      { key: 'Enter / S', label: 'Enter / S', actionDescription: 'Start diagnostic test.' },
-      { key: '1-4 / A-D', label: '1 to 4 or A to D', actionDescription: 'Select diagnostic answer choice.' },
-      { key: 'N', label: 'N', actionDescription: 'Proceed to next diagnostic item.' },
-      { key: 'R', label: 'R', actionDescription: 'Repeat question aloud.' },
-      { key: 'Escape', label: 'Escape', actionDescription: 'Stop speech.' }
+      { key: 'Enter', label: 'Enter', actionDescription: 'On Instructions screen: Request to start the Pilot Demo Diagnostic examination.' },
+      { key: 'Y', label: 'Y', actionDescription: 'Confirm start when prompted (Yes in start confirmation dialog).' },
+      { key: 'N / Escape', label: 'N or Escape', actionDescription: 'Cancel start confirmation or stop speech.' },
+      { key: '1 / A', label: '1 or A', actionDescription: 'Select Option A during diagnostic.' },
+      { key: '2 / B', label: '2 or B', actionDescription: 'Select Option B during diagnostic.' },
+      { key: '3 / C', label: '3 or C', actionDescription: 'Select Option C during diagnostic.' },
+      { key: '4 / D', label: '4 or D', actionDescription: 'Select Option D during diagnostic.' },
+      { key: 'R', label: 'R', actionDescription: 'Repeat ONLY the current question text — no prefix, no question number, no options.' },
+      { key: 'O', label: 'O', actionDescription: 'Repeat ONLY all four answer options — no intro phrase.' },
+      { key: 'Space', label: 'Space', actionDescription: 'Read the full question with prefix and all options.' },
+      { key: 'M', label: 'M', actionDescription: 'Mark or unmark question for Review.' },
+      { key: 'Alt + Shift + X', label: 'Alt + Shift + X', actionDescription: 'Request accessible exit confirmation to submit answers and leave the diagnostic examination.' },
+      { key: 'ArrowRight / Enter', label: 'Right Arrow or Enter', actionDescription: 'Go to next question.' },
+      { key: 'ArrowLeft', label: 'Left Arrow', actionDescription: 'Go to previous question.' }
     ],
-    spokenVoiceHelp: 'Pilot Demo voice commands: Say "Start Pilot Demo" to begin. Say "Option A", "Option B", "Option C", or "Option D" to answer. Say "Next Question" to proceed. Say "Repeat Question" to replay.',
-    spokenKeyboardHelp: 'Pilot Demo keyboard shortcuts: Press Enter or S to begin diagnostic. Press 1 to 4 or A to D to answer. Press N for next question. Press R to repeat question. Press Escape to stop speech.'
+    spokenVoiceHelp: 'Pilot Demo voice commands: Say "Start Pilot Demo" to begin. Say "Option A", "Option B", "Option C", or "Option D" to answer. Say "Repeat Question" to hear only the question text. Say "Repeat Options" to hear only the answer options. Say "Next Question" to proceed. Say "Submit Examination" to finish.',
+    spokenKeyboardHelp: 'Pilot Demo keyboard shortcuts: On the Instructions screen, press Enter to begin the diagnostic. Press Y to confirm start, N or Escape to cancel. During the exam, press 1 to 4 or A to D to answer. Press R to repeat only the question text. Press O to repeat only the options. Press Space to read the full question. Press M to mark review. Press Right Arrow or Enter for next question. Press Left Arrow for previous question. Press Escape to stop speech.'
   },
 
   model_evaluation: {

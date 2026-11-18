@@ -1,5 +1,8 @@
 /**
  * ACCESSPREP-X — Authentication & Candidate Registration Controller
+ * ============================================================================
+ * Handles credential validation, Audio CAPTCHA generation and verification,
+ * secure session establishment with scrypt password hashing, and user registration.
  */
 
 import type { Request, Response } from 'express';
@@ -13,8 +16,8 @@ import {
 } from '../services/index.ts';
 import {
   hashPassword,
-  isHashedPassword,
-  verifyUserPassword
+  verifyUserPassword,
+  needsRehash
 } from '../utils/password.utils.ts';
 import {
   validateCredentialsInput,
@@ -121,15 +124,12 @@ export async function postLogin(req: Request, res: Response) {
   }
 
   if (password) {
-    const storedHash = user.passwordHash;
-    if (isHashedPassword(storedHash)) {
-      if (storedHash !== hashPassword(password)) {
-        return res.status(401).json({ error: 'Invalid password or PIN.' });
-      }
-    } else {
-      if (storedHash !== password) {
-        return res.status(401).json({ error: 'Invalid password or PIN.' });
-      }
+    if (!verifyUserPassword(user.passwordHash, password)) {
+      return res.status(401).json({ error: 'Invalid password or PIN.' });
+    }
+
+    // Transparently upgrade legacy SHA-256 or plaintext hashes to secure scrypt
+    if (needsRehash(user.passwordHash, password)) {
       user.passwordHash = hashPassword(password);
       await repo.updateUserProfile(user.id, { passwordHash: user.passwordHash });
     }
@@ -137,6 +137,7 @@ export async function postLogin(req: Request, res: Response) {
 
   const settings = await repo.getAccessibilitySettings(user.id);
 
+  // Return sanitized user object without passwordHash
   res.json({
     success: true,
     user: {
@@ -205,9 +206,21 @@ export async function postRegister(req: Request, res: Response) {
 
   await repo.saveAccessibilitySettings(initialSettings);
 
+  // Return sanitized user object (never expose passwordHash)
   res.status(201).json({
     success: true,
-    user: newUser,
+    user: {
+      id: newUser.id,
+      rollNumber: newUser.rollNumber,
+      name: newUser.name,
+      email: newUser.email,
+      role: newUser.role,
+      pwdCategory: newUser.pwdCategory,
+      needScribe: newUser.needScribe,
+      examRegion: newUser.examRegion,
+      examLanguage: newUser.examLanguage,
+      createdAt: newUser.createdAt
+    },
     settings: initialSettings
   });
 }
@@ -228,5 +241,20 @@ export async function getCurrentCandidate(_req: Request, res: Response) {
     createdAt: '2026-03-01T10:00:00Z'
   };
   const settings = await repo.getAccessibilitySettings(candidate.id);
-  res.json({ user: candidate, settings });
+
+  // Never return passwordHash
+  const sanitizedCandidate = {
+    id: candidate.id,
+    rollNumber: candidate.rollNumber,
+    name: candidate.name,
+    email: candidate.email,
+    role: candidate.role,
+    pwdCategory: candidate.pwdCategory,
+    needScribe: candidate.needScribe,
+    examRegion: candidate.examRegion,
+    examLanguage: candidate.examLanguage,
+    createdAt: candidate.createdAt
+  };
+
+  res.json({ user: sanitizedCandidate, settings });
 }

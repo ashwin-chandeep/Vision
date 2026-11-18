@@ -37,7 +37,7 @@ export async function startServer() {
         middlewareMode: true,
         watch: {
           ignored: [
-            '**/src/data/**',
+            '**/src/data/**/*.json',
             '**/*.json',
             '**/*.db',
             '**/*.log',

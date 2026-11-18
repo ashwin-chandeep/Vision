@@ -32,7 +32,9 @@ import { parseSpokenAnswer } from '../utils/answerParser.ts';
 import {
   formatFullQuestionPrompt,
   formatAllOptionsPrompt,
-  formatSingleOptionPrompt
+  formatSingleOptionPrompt,
+  repeatQuestionTextOnly,
+  repeatOptionsTextOnly
 } from '../utils/repeatQuestionHelper.ts';
 import {
   MOCK_EXAM_SUBMIT_CONFIRM_PROMPT,
@@ -58,7 +60,8 @@ export function MockExamScreen() {
     playBeacon,
     startVoiceListening,
     registerVoiceHandler,
-    setIsExamActive
+    setIsExamActive,
+    pendingExamExit
   } = useAccessibility();
 
   const [rotationStatus, setRotationStatus] = useState<RotationStatus | null>(null);
@@ -80,6 +83,10 @@ export function MockExamScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isResettingCycle, setIsResettingCycle] = useState(false);
   const [isStartingExam, setIsStartingExam] = useState(false);
+  // Inline exit confirmation (triggered by Alt+Shift+X or voice "exit exam")
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
+  const [pendingExitDestination, setPendingExitDestination] = useState<string | null>(null);
+  const showExitConfirmRef = useRef(false);
 
   const currentIdxRef = useRef<number>(currentIdx);
   currentIdxRef.current = currentIdx;
@@ -145,6 +152,15 @@ export function MockExamScreen() {
     };
   }, [isExamStarted, questions.length, setIsExamActive]);
 
+  // Synchronize global pendingExamExit requests (e.g. from sidebar or navigation shortcuts)
+  useEffect(() => {
+    if (pendingExamExit && isExamStarted) {
+      setShowExitConfirm(true);
+      showExitConfirmRef.current = true;
+      setPendingExitDestination(pendingExamExit.destination);
+    }
+  }, [pendingExamExit, isExamStarted]);
+
   // Session storage synchronization as local safeguard
   useEffect(() => {
     if (isExamStarted && Object.keys(answers).length > 0 && currentAttempt) {
@@ -207,6 +223,18 @@ export function MockExamScreen() {
     }
   }, [user?.id, isPwD, setIsExamActive, announce, speakText, loadRotationStatus]);
 
+  // Request inline exit confirmation (triggered by Alt+Shift+X or voice "exit exam")
+  const requestExamExit = useCallback((destination?: string) => {
+    if (!isExamStarted) return;
+    setShowExitConfirm(true);
+    showExitConfirmRef.current = true;
+    if (destination) setPendingExitDestination(destination);
+    const msg = 'You are currently taking an examination. Do you want to submit your answers and exit? Press Y to confirm submission and exit, or N to continue the examination.';
+    stopSpeaking();
+    announce(msg, 'assertive');
+    speakText(msg);
+  }, [isExamStarted, stopSpeaking, announce, speakText]);
+
   // Final submission of examination
   const handleFinalSubmit = useCallback(async () => {
     if (!currentAttemptRef.current) return;
@@ -246,9 +274,14 @@ export function MockExamScreen() {
 
       setIsExamStarted(false);
       setIsExamActive(false);
+      // Clear exit confirmation state
+      setShowExitConfirm(false);
+      showExitConfirmRef.current = false;
+      const exitDest = pendingExitDestination;
+      setPendingExitDestination(null);
       announce('Examination submitted successfully. Loading scorecard and results review.', 'assertive');
       speakText('Examination submitted successfully. Loading scorecard and results analysis.', () => {
-        navigateTo('results');
+        navigateTo(exitDest || 'results');
       });
     } catch (e) {
       console.error('Submit exam error:', e);
@@ -257,7 +290,7 @@ export function MockExamScreen() {
       setIsSubmitting(false);
       setShowSubmitModal(false);
     }
-  }, [answers, user?.id, isPwD, announce, speakText, navigateTo, setIsExamActive]);
+  }, [answers, user?.id, isPwD, announce, speakText, navigateTo, setIsExamActive, pendingExitDestination]);
 
   // Discard in-progress examination and release question reservations
   const handleDiscardExam = useCallback(async () => {
@@ -415,11 +448,11 @@ export function MockExamScreen() {
 
     const nextIdx = currentIdxRef.current + 1;
     if (nextIdx < questionsRef.current.length) {
-      speakText(`Recorded Option ${optKey}. Moving to next question.`, () => {
+      speakText(`You selected option ${optKey}.`, () => {
         setCurrentIdx(nextIdx);
       });
     } else {
-      speakText(`Recorded Option ${optKey}. You have reached the end of the test. Say 'Submit' to submit your exam, or 'Review' to go back.`);
+      speakText(`You selected option ${optKey}. You have reached the end of the test. Say 'Submit' to submit your exam, or 'Review' to go back.`);
     }
   }, [currentQ, answers, playBeacon, announce, speakText, user?.id]);
 
@@ -568,6 +601,36 @@ export function MockExamScreen() {
         return true;
       }
 
+      // Handle inline exit confirmation (Alt+Shift+X flow or voice "exit exam")
+      if (showExitConfirmRef.current) {
+        if (isSubmitConfirmPhrase(clean) || clean === 'yes' || clean === 'yes submit' || clean === 'yes exit') {
+          handleFinalSubmit();
+          return true;
+        }
+        if (isSubmitCancelPhrase(clean) || clean === 'no' || clean === 'no continue' || clean === 'cancel exit') {
+          setShowExitConfirm(false);
+          showExitConfirmRef.current = false;
+          setPendingExitDestination(null);
+          const cancelMsg = 'Exit cancelled. Continuing your Mock Examination.';
+          announce(cancelMsg, 'polite');
+          speakText(cancelMsg);
+          return true;
+        }
+        return true; // absorb all input while exit confirm is shown
+      }
+
+      // Voice commands to request exam exit
+      if (
+        clean === 'exit exam' ||
+        clean === 'leave examination' ||
+        clean === 'leave exam' ||
+        clean === 'exit examination' ||
+        clean === 'submit and exit'
+      ) {
+        requestExamExit();
+        return true;
+      }
+
       const optionsMap = {
         A: currentQ.option_a,
         B: currentQ.option_b,
@@ -580,11 +643,13 @@ export function MockExamScreen() {
       if (parsed) {
         if (parsed.type === 'control') {
           if (parsed.command === 'repeat') {
-            readQuestionAloud(currentQ, currentIdxRef.current, questionsRef.current.length);
+            // Repeat ONLY the question text — no prefix, no question number, no options
+            if (currentQ) { stopSpeaking(); speakText(repeatQuestionTextOnly(currentQ)); }
             return true;
           }
           if (parsed.command === 'repeat_options') {
-            repeatOptionsAloud(currentQ);
+            // Repeat ONLY the options — no "The options are:" prefix
+            if (currentQ) { stopSpeaking(); speakText(repeatOptionsTextOnly(currentQ)); }
             return true;
           }
           if (parsed.command === 'repeat_option_a') {
@@ -673,7 +738,7 @@ export function MockExamScreen() {
     });
 
     return () => unregister();
-  }, [isExamStarted, currentQ, registerVoiceHandler, readQuestionAloud, handleToggleMarkForReview, handleRecordOption, handleFinalSubmit, speakText, handleStartExam, mockExamInstructions, handleConfirmResetCycle]);
+  }, [isExamStarted, currentQ, registerVoiceHandler, readQuestionAloud, handleToggleMarkForReview, handleRecordOption, handleFinalSubmit, speakText, handleStartExam, mockExamInstructions, handleConfirmResetCycle, requestExamExit, announce]);
 
   // Single-key WCAG keyboard accessibility
   useEffect(() => {
@@ -681,10 +746,35 @@ export function MockExamScreen() {
       const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
       if (tag === 'input' || tag === 'textarea') return;
 
+      // Alt+Shift+X — Request inline exam exit confirmation (global during exam)
+      if (e.altKey && e.shiftKey && e.key.toUpperCase() === 'X') {
+        e.preventDefault();
+        if (isExamStarted) requestExamExit();
+        return;
+      }
+
       if (!isExamStarted) {
         if (e.key === 'Enter') {
           e.preventDefault();
           handleStartExam();
+        }
+        return;
+      }
+
+      // If exit confirm banner is showing: only Y/N/Escape handled
+      if (showExitConfirmRef.current) {
+        const key = e.key.toUpperCase();
+        if (key === 'Y') {
+          e.preventDefault();
+          handleFinalSubmit();
+        } else if (key === 'N' || e.key === 'Escape') {
+          e.preventDefault();
+          setShowExitConfirm(false);
+          showExitConfirmRef.current = false;
+          setPendingExitDestination(null);
+          const msg = 'Exit cancelled. Continuing your Mock Examination.';
+          announce(msg, 'polite');
+          speakText(msg);
         }
         return;
       }
@@ -700,15 +790,39 @@ export function MockExamScreen() {
       } else if (e.code === 'Space') {
         e.preventDefault();
         if (currentQ) readQuestionAloud(currentQ, currentIdx, questions.length);
+      } else if (key === 'R' && !e.altKey) {
+        // R — repeat ONLY the question text (no prefix, no question number, no options)
+        e.preventDefault();
+        if (currentQ) { stopSpeaking(); speakText(repeatQuestionTextOnly(currentQ)); }
+      } else if (key === 'O' && !e.altKey) {
+        // O — repeat ONLY the options (no "The options are:" prefix)
+        e.preventDefault();
+        if (currentQ) { stopSpeaking(); speakText(repeatOptionsTextOnly(currentQ)); }
+      } else if (key === 'M' && !e.altKey) {
+        // M — Mark or unmark question for review
+        e.preventDefault();
+        handleToggleMarkForReview();
       } else if (e.altKey && key === 'H') {
         e.preventDefault();
         handleToggleMarkForReview();
+      } else if ((key === 'P' || e.key === 'ArrowLeft') && !e.altKey) {
+        // P or Left Arrow — Navigate to previous question
+        e.preventDefault();
+        if (currentIdxRef.current > 0) {
+          setCurrentIdx(currentIdxRef.current - 1);
+        }
+      } else if ((key === 'N' || e.key === 'ArrowRight' || e.key === 'Enter') && !e.altKey) {
+        // N, Right Arrow, or Enter — Advance to next question
+        e.preventDefault();
+        if (currentIdxRef.current < questionsRef.current.length - 1) {
+          setCurrentIdx(currentIdxRef.current + 1);
+        }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isExamStarted, currentQ, currentIdx, questions.length, handleRecordOption, readQuestionAloud, handleToggleMarkForReview, handleStartExam]);
+  }, [isExamStarted, currentQ, currentIdx, questions.length, handleRecordOption, readQuestionAloud, handleToggleMarkForReview, handleStartExam, stopSpeaking, speakText, requestExamExit, handleFinalSubmit, announce]);
 
   // Format Timer
   const formatTime = (secs: number) => {
@@ -1183,25 +1297,31 @@ export function MockExamScreen() {
               <button
                 type="button"
                 data-action="repeat-question"
-                onClick={() => readQuestionAloud(currentQ, currentIdx, questions.length)}
+                onClick={() => {
+                  stopSpeaking();
+                  speakText(repeatQuestionTextOnly(currentQ));
+                }}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-[#1749E8] bg-[#EEF4FF] hover:bg-blue-100 border border-blue-200 rounded-lg shadow-2xs transition-colors focus:ring-2 focus:ring-[#1749E8]"
-                aria-label="Repeat exam question and options aloud (Keyboard shortcut: Alt+R)"
-                title="Repeat question & options (Alt+R)"
+                aria-label="Repeat current question text only (Keyboard shortcut: R — question only, Space — full question)"
+                title="Repeat question text only (R)"
               >
                 <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
-                <span>Repeat Question (Alt+R)</span>
+                <span>Repeat Question (R)</span>
               </button>
 
               <button
                 type="button"
                 data-action="repeat-options"
-                onClick={() => repeatOptionsAloud(currentQ)}
+                onClick={() => {
+                  stopSpeaking();
+                  speakText(repeatOptionsTextOnly(currentQ));
+                }}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-[#1749E8] bg-[#EEF4FF] hover:bg-blue-100 border border-blue-200 rounded-lg shadow-2xs transition-colors focus:ring-2 focus:ring-[#1749E8]"
-                aria-label="Repeat all four options aloud (Keyboard shortcut: Alt+O)"
-                title="Repeat options only (Alt+O)"
+                aria-label="Repeat answer options only (Keyboard shortcut: O — options only)"
+                title="Repeat options only (O)"
               >
                 <List className="w-3.5 h-3.5" aria-hidden="true" />
-                <span>Repeat Options (Alt+O)</span>
+                <span>Repeat Options (O)</span>
               </button>
 
               {isSpeaking && (
@@ -1239,7 +1359,7 @@ export function MockExamScreen() {
                 </>
               )}
 
-              <AudioToolbar textToRead={questionSpeech} label="Read exam question aloud (Alt+R)" />
+              <AudioToolbar textToRead={questionSpeech} label="Read exam question aloud" />
               <VoiceInputButton
                 onTranscriptConfirmed={(txt) => {
                   const parsed = parseSpokenAnswer(txt, {
@@ -1331,7 +1451,7 @@ export function MockExamScreen() {
                 }`}
               >
                 <Flag className="w-3.5 h-3.5" />
-                <span>{isMarked ? 'Marked for Review' : 'Mark for Review & Next (Alt+H)'}</span>
+                <span>{isMarked ? 'Marked for Review' : 'Mark for Review & Next (M)'}</span>
               </button>
             </div>
 
@@ -1341,16 +1461,20 @@ export function MockExamScreen() {
                 onClick={() => currentIdx > 0 && setCurrentIdx(currentIdx - 1)}
                 disabled={currentIdx === 0}
                 className="px-3.5 py-2 text-xs font-semibold text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg border border-slate-300 disabled:opacity-30"
+                aria-label="Previous question (P or Left Arrow)"
+                title="Previous question (P or Left Arrow)"
               >
-                Previous (Alt+P)
+                Previous (P)
               </button>
               <button
                 type="button"
                 onClick={() => currentIdx < questions.length - 1 && setCurrentIdx(currentIdx + 1)}
                 disabled={currentIdx === questions.length - 1}
                 className="px-4 py-2 text-xs font-bold text-white bg-blue-700 hover:bg-blue-800 rounded-lg shadow-xs disabled:opacity-30"
+                aria-label="Save and proceed to next question (N or Enter)"
+                title="Save & Next (N or Enter)"
               >
-                Save &amp; Next (Alt+N)
+                Save &amp; Next (N / Enter)
               </button>
             </div>
           </div>
@@ -1430,6 +1554,58 @@ export function MockExamScreen() {
           </button>
         </div>
       </div>
+
+      {/* ── Inline Exam Exit Confirmation Banner (Alt+Shift+X or voice "exit exam") ── */}
+      {showExitConfirm && (
+        <div
+          role="alertdialog"
+          aria-modal="false"
+          aria-labelledby="exam-exit-confirm-title"
+          aria-describedby="exam-exit-confirm-desc"
+          className="mx-4 mb-4 p-4 bg-amber-50 border-2 border-amber-500 rounded-2xl shadow-lg"
+        >
+          <div className="flex items-start gap-3">
+            <ShieldAlert className="w-6 h-6 text-amber-600 flex-shrink-0 mt-0.5" aria-hidden="true" />
+            <div className="flex-1 min-w-0">
+              <h3 id="exam-exit-confirm-title" className="text-sm font-bold text-amber-800 mb-1">
+                Exit Examination?
+              </h3>
+              <p id="exam-exit-confirm-desc" className="text-xs text-amber-700 leading-relaxed mb-3">
+                You are currently taking an examination. Do you want to <strong>submit your answers and exit</strong>?
+                Your answers so far will be saved and scored.
+              </p>
+              <div className="flex items-center gap-3 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => handleFinalSubmit()}
+                  disabled={isSubmitting}
+                  className="px-4 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-50 rounded-lg shadow-sm transition-all flex items-center gap-1.5"
+                  aria-label="Yes, submit answers and exit examination"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" />
+                  {isSubmitting ? 'Submitting...' : 'Yes, Submit & Exit (Y)'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowExitConfirm(false);
+                    showExitConfirmRef.current = false;
+                    setPendingExitDestination(null);
+                    const msg = 'Exit cancelled. Continuing your Mock Examination.';
+                    announce(msg, 'polite');
+                    speakText(msg);
+                  }}
+                  className="px-4 py-2 text-xs font-semibold text-amber-800 bg-white hover:bg-amber-100 rounded-lg border border-amber-300 transition-all"
+                  aria-label="No, cancel exit and continue examination"
+                >
+                  No, Continue Exam (N)
+                </button>
+                <span className="text-xs text-amber-600 ml-auto">Press <kbd className="font-mono font-bold">Y</kbd> to submit · <kbd className="font-mono font-bold">N</kbd> or <kbd className="font-mono font-bold">Esc</kbd> to cancel</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Discard Attempt Dialog */}
       {showDiscardModal && (
